@@ -27,14 +27,14 @@ const COLORS = {
   singleBlack: '#1a1a1a',
   singleCream: '#f0e0b0',
   tripleGreenEven: '#1a7a30',
-  tripleRedOdd: '#cc2222',
-  doubleRedEven: '#cc2222',
+  tripleRedOdd: '#cc2200',
+  doubleRedEven: '#cc2200',
   doubleGreenOdd: '#1a7a30',
   outerBull: '#1a7a30',
-  bull: '#cc2222',
-  border: '#2c1a10',
-  wire: '#888888',
-  numberColor: 'white',
+  bull: '#cc2200',
+  border: '#0a1628',
+  wire: '#7ab3cc',
+  numberColor: '#f5c518',
 };
 
 function makeAnnularSector(
@@ -176,8 +176,8 @@ export default function Dartboard({ size, darts = [], aimIndicator }: DartboardP
       {/* Aim indicator — large fuzzy zone, no center */}
       {aimIndicator && (
         <Group>
-          <Circle cx={aimIndicator.x} cy={aimIndicator.y} r={aimIndicator.radius} color="rgba(255,255,255,0.10)" />
-          <Circle cx={aimIndicator.x} cy={aimIndicator.y} r={aimIndicator.radius} color="rgba(255,255,255,0.25)" style="stroke" strokeWidth={1.5} />
+          <Circle cx={aimIndicator.x} cy={aimIndicator.y} r={aimIndicator.radius} color="rgba(0,212,255,0.08)" />
+          <Circle cx={aimIndicator.x} cy={aimIndicator.y} r={aimIndicator.radius} color="rgba(0,212,255,0.5)" style="stroke" strokeWidth={1.5} />
         </Group>
       )}
 

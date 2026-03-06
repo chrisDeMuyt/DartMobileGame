@@ -25,9 +25,9 @@ interface SlingshotProps {
 }
 
 const MAX_PULL = 85;
-const FORK_COLOR = '#7B4F2E';
-const FORK_HIGHLIGHT = '#B07040';
-const BAND_COLOR = '#CC2200';
+const FORK_COLOR = '#1a3a5c';
+const FORK_HIGHLIGHT = '#00d4ff';
+const BAND_COLOR = '#cc2200';
 
 export default function Slingshot({
   width,
@@ -230,7 +230,7 @@ export default function Slingshot({
           {/* Trajectory preview */}
           <Path
             path={trajectoryPath}
-            color="rgba(255,215,0,0.75)"
+            color="rgba(245,197,24,0.80)"
             style="stroke"
             strokeWidth={2.5}
           />
@@ -280,7 +280,7 @@ export default function Slingshot({
           {/* Dart body */}
           <Path path={dartPath} color="#C8C8C8" style="fill" />
           {/* Dart flights */}
-          <Path path={flightsPath} color="#4a9eff" style="stroke" strokeWidth={3} strokeCap={StrokeCap.Round} />
+          <Path path={flightsPath} color="#00d4ff" style="stroke" strokeWidth={3} strokeCap={StrokeCap.Round} />
           {/* Dart center glint */}
           <Circle cx={pullX} cy={pullY} r={2.5} color="rgba(255,255,255,0.6)" />
         </Canvas>

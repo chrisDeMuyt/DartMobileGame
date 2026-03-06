@@ -1,4 +1,4 @@
-import React, { useReducer, useCallback, useState } from 'react';
+import React, { useReducer, useCallback, useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,39 +7,38 @@ import {
   useWindowDimensions,
   Vibration,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import Dartboard, { DartMarker, boardRadius } from '../components/Dartboard';
+import FlyingDartOverlay from '../components/FlyingDartOverlay';
 import Slingshot from '../components/Slingshot';
 import Scoreboard from '../components/Scoreboard';
 import { getDartScore, DartHit } from '../lib/dartboard';
 import {
-  GameState,
-  GameMode,
+  RoundsState,
   Player,
   initGameState,
   addDart,
-  endTurn,
+  advanceTurn,
 } from '../lib/gameLogic';
+import { PIXEL_FONT, pixelShadow, pixelShadowSm, COLORS } from '../lib/theme';
 
 // ---- Reducer ----
 
 type Action =
   | { type: 'THROW'; dart: DartHit }
+  | { type: 'ADVANCE_TURN' }
   | { type: 'RESTART' };
 
-function gameReducer(state: GameState, action: Action): GameState {
+function gameReducer(state: RoundsState, action: Action): RoundsState {
   switch (action.type) {
-    case 'THROW': {
-      const hasWinner = 'winner' in state && state.winner !== null;
-      if (hasWinner) return state;
-      if (state.currentTurnDarts.length >= 3) return state;
-      const next = addDart(state, action.dart);
-      if (next.currentTurnDarts.length === 3) return endTurn(next);
-      return next;
-    }
+    case 'THROW':
+      if (state.turnOutcome !== null) return state;
+      return addDart(state, action.dart);
+    case 'ADVANCE_TURN':
+      return advanceTurn(state);
     case 'RESTART':
-      return initGameState(state.mode, state.players);
+      return initGameState(state.player);
     default:
       return state;
   }
@@ -47,73 +46,144 @@ function gameReducer(state: GameState, action: Action): GameState {
 
 // ---- Helpers ----
 
-function getWinner(state: GameState): number | null {
-  return 'winner' in state ? state.winner : null;
+function getDartColor(dartIndex: number): string {
+  return ['#f5c518', '#e0b010', '#c89c00'][dartIndex % 3];
 }
 
-function getCurrentPlayerIndex(state: GameState): number {
-  return 'currentPlayerIndex' in state ? (state.currentPlayerIndex as number) : 0;
+// ---- TurnWonOverlay ----
+
+function TurnWonOverlay({
+  turnScore,
+  turnTarget,
+  onContinue,
+}: {
+  turnScore: number;
+  turnTarget: number;
+  onContinue: () => void;
+}) {
+  useEffect(() => {
+    const timer = setTimeout(onContinue, 1800);
+    return () => clearTimeout(timer);
+  }, [onContinue]);
+
+  const bonus = turnScore - turnTarget;
+
+  return (
+    <TouchableOpacity style={overlayStyles.wonBg} activeOpacity={1} onPress={onContinue}>
+      <Text style={overlayStyles.wonTitle}>TURN CLEARED</Text>
+      <Text style={overlayStyles.wonScore}>
+        {turnScore} / {turnTarget} pts
+      </Text>
+      {bonus > 0 && (
+        <Text style={overlayStyles.wonBonus}>+{bonus} bonus</Text>
+      )}
+      <Text style={overlayStyles.wonContinue}>TAP TO CONTINUE</Text>
+    </TouchableOpacity>
+  );
 }
 
-function getDartColor(playerIndex: number, dartIndex: number): string {
-  const palettes = [
-    ['#ff6b6b', '#ff5252', '#ff3030'],
-    ['#4a9eff', '#3a8eef', '#2a7edf'],
-  ];
-  return palettes[playerIndex % palettes.length][dartIndex % 3];
+// ---- GameOverOverlay ----
+
+function GameOverOverlay({
+  state,
+  onRestart,
+  onMenu,
+}: {
+  state: RoundsState;
+  onRestart: () => void;
+  onMenu: () => void;
+}) {
+  const { roundIndex, turnIndex, turnTarget, turnScore, globalTurnIndex } = state;
+
+  return (
+    <View style={overlayStyles.overBg}>
+      <Text style={overlayStyles.overTitle}>GAME OVER</Text>
+      <Text style={overlayStyles.overName}>{state.player.name}</Text>
+
+      <View style={overlayStyles.statsCard}>
+        <StatRow label="REACHED" value={`Round ${roundIndex + 1}  Turn ${turnIndex + 1}`} valueStyle={overlayStyles.statBright} />
+        <StatRow label="NEEDED" value={`${turnTarget} pts`} valueStyle={overlayStyles.statGold} />
+        <StatRow label="SCORED" value={`${turnScore} pts`} valueStyle={overlayStyles.statRed} />
+        <StatRow label="TURNS WON" value={String(globalTurnIndex)} valueStyle={overlayStyles.statBright} />
+      </View>
+
+      <TouchableOpacity style={overlayStyles.restartBtn} onPress={onRestart}>
+        <Text style={overlayStyles.restartBtnText}>PLAY AGAIN</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={overlayStyles.menuBtn} onPress={onMenu}>
+        <Text style={overlayStyles.menuBtnText}>MAIN MENU</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+function StatRow({ label, value, valueStyle }: { label: string; value: string; valueStyle?: object }) {
+  return (
+    <View style={overlayStyles.statRow}>
+      <Text style={overlayStyles.statLabel}>{label}</Text>
+      <Text style={[overlayStyles.statValue, valueStyle]}>{value}</Text>
+    </View>
+  );
 }
 
 // ---- Screen ----
 
 export default function GameScreen() {
   const { width, height } = useWindowDimensions();
-  const params = useLocalSearchParams<{
-    mode: string;
-    numPlayers: string;
-    player1: string;
-    player2: string;
-  }>();
+  const params = useLocalSearchParams<{ playerName: string }>();
+  const player: Player = { id: 0, name: params.playerName ?? 'Player' };
 
-  const mode = (params.mode ?? '301') as GameMode;
-  const numPlayers = parseInt(params.numPlayers ?? '2', 10);
-
-  const players: Player[] = [{ id: 0, name: params.player1 ?? 'Player 1' }];
-  if (numPlayers >= 2 && mode !== 'practice') {
-    players.push({ id: 1, name: params.player2 ?? 'Player 2' });
-  }
-
-  const [state, dispatch] = useReducer(gameReducer, undefined, () =>
-    initGameState(mode, players)
-  );
+  const [state, dispatch] = useReducer(gameReducer, undefined, () => initGameState(player));
 
   const [aimPreview, setAimPreview] = useState<{ x: number; y: number; radius: number } | null>(null);
 
-  // Board sizing
   const boardSize = Math.min(width, height * 0.46);
   const bRadius = boardRadius(boardSize);
   const boardCX = boardSize / 2;
   const boardCY = boardSize / 2;
-
   const slingshotHeight = Math.max(155, height * 0.30);
 
-  const currentPI = getCurrentPlayerIndex(state);
   const dartMarkers: DartMarker[] = state.currentTurnDarts.map((d, i) => ({
     x: d.x,
     y: d.y,
-    color: getDartColor(currentPI, i),
+    color: getDartColor(i),
   }));
 
-  // normX: -1 (left) to 1 (right), power: 0 to 1
-  const AIM_SPREAD = bRadius * 0.22; // constant aim circle size
+  const AIM_SPREAD = bRadius * 0.22;
+
+  const insets = useSafeAreaInsets();
+  const boardViewRef = useRef<View>(null);
+  const boardScreenYRef = useRef(0);
+  const pendingDartRef = useRef<DartHit | null>(null);
+  const throwContextRef = useRef({ dartCount: state.currentTurnDarts.length });
+  throwContextRef.current = { dartCount: state.currentTurnDarts.length };
+
+  const [flyingDart, setFlyingDart] = useState<{
+    from: { x: number; y: number };
+    to: { x: number; y: number };
+    flightColor: string;
+  } | null>(null);
+
+  const onBoardLayout = useCallback(() => {
+    boardViewRef.current?.measure((_x, _y, _w, _h, _pageX, pageY) => {
+      boardScreenYRef.current = pageY - insets.top;
+    });
+  }, [insets.top]);
+
+  const onDartLanded = useCallback(() => {
+    const dart = pendingDartRef.current;
+    if (!dart) return;
+    pendingDartRef.current = null;
+    Vibration.vibrate(30);
+    dispatch({ type: 'THROW', dart });
+    setFlyingDart(null);
+  }, []);
 
   const handleThrow = useCallback(
     (normX: number, normY: number) => {
-      // X: pull left → dart goes right (inverted, natural slingshot)
       const aimX = boardCX - normX * bRadius * 1.15;
-      // Y: pull further down → dart goes higher on board
       const aimY = boardCY + bRadius * (0.8 - 1.6 * normY);
 
-      // Uniform random landing anywhere within the constant aim circle
       const angle = Math.random() * 2 * Math.PI;
       const r = Math.pow(Math.random(), 1.8) * AIM_SPREAD;
       const finalX = aimX + r * Math.cos(angle);
@@ -121,12 +191,26 @@ export default function GameScreen() {
 
       const scoreData = getDartScore(finalX - boardCX, finalY - boardCY, bRadius);
       const dart: DartHit = { x: finalX, y: finalY, ...scoreData };
+      pendingDartRef.current = dart;
 
-      Vibration.vibrate(30);
-      dispatch({ type: 'THROW', dart });
+      const boardLeft = (width - boardSize) / 2;
+      const toX = boardLeft + finalX;
+      const toY = boardScreenYRef.current + finalY;
+
+      const contentHeight = height - insets.top - insets.bottom;
+      const fromX = width / 2;
+      const fromY = contentHeight - slingshotHeight + 44 + (slingshotHeight - 44) * 0.52;
+
+      const { dartCount } = throwContextRef.current;
+
       setAimPreview(null);
+      setFlyingDart({
+        from: { x: fromX, y: fromY },
+        to: { x: toX, y: toY },
+        flightColor: getDartColor(dartCount),
+      });
     },
-    [boardCX, boardCY, bRadius]
+    [boardCX, boardCY, bRadius, width, height, boardSize, slingshotHeight, insets]
   );
 
   const handleAimUpdate = useCallback(
@@ -144,9 +228,8 @@ export default function GameScreen() {
     [boardCX, boardCY, bRadius]
   );
 
-  const winner = getWinner(state);
-  const currentPlayer = state.players[getCurrentPlayerIndex(state)];
-  const dartsLeft = 3 - state.currentTurnDarts.length;
+  const showWon = state.turnOutcome === 'won' && flyingDart === null;
+  const showOver = state.turnOutcome === 'lost' && flyingDart === null;
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -155,12 +238,14 @@ export default function GameScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Text style={styles.backText}>Menu</Text>
         </TouchableOpacity>
-        <Text style={styles.modeLabel}>{mode.toUpperCase()}</Text>
+        <Text style={styles.modeLabel}>
+          R{state.roundIndex + 1}{'  '}T{state.turnIndex + 1}/3
+        </Text>
         <View style={{ width: 60 }} />
       </View>
 
       {/* Dartboard */}
-      <View style={styles.boardContainer}>
+      <View ref={boardViewRef} style={styles.boardContainer} onLayout={onBoardLayout}>
         <Dartboard size={boardSize} darts={dartMarkers} aimIndicator={aimPreview} />
       </View>
 
@@ -169,55 +254,63 @@ export default function GameScreen() {
         <Scoreboard state={state} />
       </View>
 
-      {/* Win overlay */}
-      {winner !== null && (
-        <View style={styles.winOverlay}>
-          <Text style={styles.winEmoji}>🎯</Text>
-          <Text style={styles.winTitle}>
-            {mode === 'practice' ? 'Done!' : `${state.players[winner].name} Wins!`}
-          </Text>
-          <TouchableOpacity
-            style={styles.restartBtn}
-            onPress={() => dispatch({ type: 'RESTART' })}
-          >
-            <Text style={styles.restartBtnText}>Play Again</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.menuBtn} onPress={() => router.back()}>
-            <Text style={styles.menuBtnText}>Main Menu</Text>
-          </TouchableOpacity>
+      {/* Slingshot throw zone */}
+      <View style={[styles.slingshotZone, { height: slingshotHeight }]}>
+        <View style={styles.throwInfo}>
+          <Text style={styles.playerTurnText}>{state.player.name}</Text>
+          <View style={styles.dartDotsRow}>
+            {[0, 1, 2].map(i => (
+              <View
+                key={i}
+                style={[
+                  styles.dartDot,
+                  i < state.currentTurnDarts.length ? styles.dartDotUsed : styles.dartDotFull,
+                ]}
+              />
+            ))}
+            <Text style={styles.dartsLeftText}>
+              {3 - state.currentTurnDarts.length} dart{3 - state.currentTurnDarts.length !== 1 ? 's' : ''}
+            </Text>
+          </View>
         </View>
+
+        <Slingshot
+          width={width}
+          height={slingshotHeight - 44}
+          disabled={state.turnOutcome !== null || flyingDart !== null}
+          onThrow={handleThrow}
+          onAimUpdate={handleAimUpdate}
+        />
+      </View>
+
+      {/* Flying dart animation */}
+      {flyingDart && (
+        <FlyingDartOverlay
+          from={flyingDart.from}
+          to={flyingDart.to}
+          flightColor={flyingDart.flightColor}
+          width={width}
+          height={height - insets.top - insets.bottom}
+          onLanded={onDartLanded}
+        />
       )}
 
-      {/* Slingshot throw zone */}
-      {winner === null && (
-        <View style={[styles.slingshotZone, { height: slingshotHeight }]}>
-          {/* Player + dart counter */}
-          <View style={styles.throwInfo}>
-            <Text style={styles.playerTurnText}>{currentPlayer.name}</Text>
-            <View style={styles.dartDotsRow}>
-              {[0, 1, 2].map(i => (
-                <View
-                  key={i}
-                  style={[
-                    styles.dartDot,
-                    i < state.currentTurnDarts.length ? styles.dartDotUsed : styles.dartDotFull,
-                  ]}
-                />
-              ))}
-              <Text style={styles.dartsLeftText}>
-                {dartsLeft} dart{dartsLeft !== 1 ? 's' : ''}
-              </Text>
-            </View>
-          </View>
+      {/* Turn Won overlay */}
+      {showWon && (
+        <TurnWonOverlay
+          turnScore={state.turnScore}
+          turnTarget={state.turnTarget}
+          onContinue={() => dispatch({ type: 'ADVANCE_TURN' })}
+        />
+      )}
 
-          <Slingshot
-            width={width}
-            height={slingshotHeight - 44}
-            disabled={winner !== null}
-            onThrow={handleThrow}
-            onAimUpdate={handleAimUpdate}
-          />
-        </View>
+      {/* Game Over overlay */}
+      {showOver && (
+        <GameOverOverlay
+          state={state}
+          onRestart={() => dispatch({ type: 'RESTART' })}
+          onMenu={() => router.back()}
+        />
       )}
     </SafeAreaView>
   );
@@ -226,26 +319,29 @@ export default function GameScreen() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#0d0d1a',
+    backgroundColor: COLORS.bgDark,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 6,
+    paddingVertical: 8,
+    borderBottomWidth: 2,
+    borderBottomColor: COLORS.bgCard,
   },
-  backBtn: { width: 60 },
+  backBtn: { width: 70 },
   backText: {
-    color: '#4a9eff',
-    fontSize: 14,
-    fontWeight: '600',
+    fontFamily: PIXEL_FONT,
+    color: COLORS.cyan,
+    fontSize: 8,
+    letterSpacing: 1,
   },
   modeLabel: {
-    color: '#555',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 1.5,
+    fontFamily: PIXEL_FONT,
+    color: COLORS.gold,
+    fontSize: 10,
+    letterSpacing: 4,
   },
   boardContainer: {
     alignItems: 'center',
@@ -255,23 +351,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   slingshotZone: {
-    backgroundColor: '#0a0a18',
-    borderTopWidth: 1,
-    borderTopColor: '#1e1e3a',
+    backgroundColor: COLORS.bgPanel,
+    borderTopWidth: 2,
+    borderTopColor: COLORS.bgCard,
   },
   throwInfo: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingTop: 6,
+    paddingTop: 8,
     paddingBottom: 2,
     height: 44,
   },
   playerTurnText: {
-    color: '#4a9eff',
-    fontSize: 15,
-    fontWeight: 'bold',
+    fontFamily: PIXEL_FONT,
+    color: COLORS.cyan,
+    fontSize: 9,
+    letterSpacing: 2,
   },
   dartDotsRow: {
     flexDirection: 'row',
@@ -279,57 +376,134 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   dartDot: {
-    width: 11,
-    height: 11,
-    borderRadius: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 0,
   },
   dartDotFull: {
-    backgroundColor: '#ff6b6b',
+    backgroundColor: COLORS.gold,
   },
   dartDotUsed: {
     backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: '#2a2a4a',
+    borderWidth: 2,
+    borderColor: COLORS.bgCard,
   },
   dartsLeftText: {
-    color: '#333',
-    fontSize: 11,
-    marginLeft: 2,
+    fontFamily: PIXEL_FONT,
+    color: COLORS.muted,
+    fontSize: 7,
+    marginLeft: 4,
   },
-  // Win overlay
-  winOverlay: {
+});
+
+const overlayStyles = StyleSheet.create({
+  wonBg: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.9)',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0, 50, 70, 0.96)',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 16,
+    gap: 14,
   },
-  winEmoji: { fontSize: 72 },
-  winTitle: {
-    color: 'white',
-    fontSize: 30,
-    fontWeight: 'bold',
-    textAlign: 'center',
+  wonTitle: {
+    fontFamily: PIXEL_FONT,
+    color: COLORS.cyan,
+    fontSize: 20,
+    letterSpacing: 4,
+    textShadowColor: COLORS.cyan,
+    textShadowOffset: { width: 3, height: 3 },
+    textShadowRadius: 0,
   },
-  restartBtn: {
-    backgroundColor: '#4a9eff',
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 44,
+  wonScore: {
+    fontFamily: PIXEL_FONT,
+    color: COLORS.bright,
+    fontSize: 12,
+    letterSpacing: 2,
+  },
+  wonBonus: {
+    fontFamily: PIXEL_FONT,
+    color: COLORS.gold,
+    fontSize: 9,
+    letterSpacing: 2,
+  },
+  wonContinue: {
+    fontFamily: PIXEL_FONT,
+    color: COLORS.muted,
+    fontSize: 7,
+    letterSpacing: 2,
     marginTop: 8,
   },
-  restartBtnText: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: 'bold',
+  overBg: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(50, 0, 0, 0.97)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 14,
   },
-  menuBtn: { paddingVertical: 10 },
+  overTitle: {
+    fontFamily: PIXEL_FONT,
+    color: COLORS.red,
+    fontSize: 22,
+    letterSpacing: 4,
+    textShadowColor: COLORS.red,
+    textShadowOffset: { width: 3, height: 3 },
+    textShadowRadius: 0,
+  },
+  overName: {
+    fontFamily: PIXEL_FONT,
+    color: COLORS.muted,
+    fontSize: 9,
+    letterSpacing: 2,
+  },
+  statsCard: {
+    backgroundColor: COLORS.bgPanel,
+    borderWidth: 2,
+    borderColor: COLORS.bgCard,
+    padding: 16,
+    gap: 10,
+    width: 240,
+    ...pixelShadowSm,
+  },
+  statRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  statLabel: {
+    fontFamily: PIXEL_FONT,
+    color: COLORS.muted,
+    fontSize: 7,
+    letterSpacing: 1,
+  },
+  statValue: {
+    fontFamily: PIXEL_FONT,
+    fontSize: 9,
+    letterSpacing: 1,
+  },
+  statBright: { color: COLORS.bright },
+  statGold: { color: COLORS.gold },
+  statRed: { color: COLORS.red },
+  restartBtn: {
+    backgroundColor: COLORS.gold,
+    borderRadius: 0,
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderWidth: 2,
+    borderColor: COLORS.bright,
+    ...pixelShadow,
+  },
+  restartBtnText: {
+    fontFamily: PIXEL_FONT,
+    color: COLORS.bgDark,
+    fontSize: 10,
+    letterSpacing: 2,
+  },
+  menuBtn: { paddingVertical: 12 },
   menuBtnText: {
-    color: '#555',
-    fontSize: 15,
+    fontFamily: PIXEL_FONT,
+    color: COLORS.muted,
+    fontSize: 8,
+    letterSpacing: 1,
   },
 });
