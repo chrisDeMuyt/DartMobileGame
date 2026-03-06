@@ -1,4 +1,4 @@
-import React, { useReducer, useCallback, useState, useRef, useEffect } from 'react';
+import React, { useReducer, useCallback, useState, useRef, useEffect, Suspense, lazy } from 'react';
 import {
   View,
   Text,
@@ -9,10 +9,14 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import Dartboard, { DartMarker, boardRadius } from '../components/Dartboard';
-import FlyingDartOverlay from '../components/FlyingDartOverlay';
-import Slingshot from '../components/Slingshot';
+import type { DartMarker } from '../components/Dartboard';
+// Lazy imports so @shopify/react-native-skia (and Skia.web.js) is only evaluated
+// after global.CanvasKit is set (guarded by skiaReady in _layout.tsx).
+const Dartboard = lazy(() => import('../components/Dartboard'));
+const FlyingDartOverlay = lazy(() => import('../components/FlyingDartOverlay'));
+const Slingshot = lazy(() => import('../components/Slingshot'));
 import Scoreboard from '../components/Scoreboard';
+import ShopModal from '../components/ShopModal';
 import { getDartScore, DartHit } from '../lib/dartboard';
 import {
   RoundsState,
@@ -20,6 +24,7 @@ import {
   initGameState,
   addDart,
   advanceTurn,
+  buyUpgrade,
 } from '../lib/gameLogic';
 import { PIXEL_FONT, pixelShadow, pixelShadowSm, COLORS } from '../lib/theme';
 
@@ -28,6 +33,7 @@ import { PIXEL_FONT, pixelShadow, pixelShadowSm, COLORS } from '../lib/theme';
 type Action =
   | { type: 'THROW'; dart: DartHit }
   | { type: 'ADVANCE_TURN' }
+  | { type: 'BUY_UPGRADE'; itemId: string }
   | { type: 'RESTART' };
 
 function gameReducer(state: RoundsState, action: Action): RoundsState {
@@ -37,6 +43,8 @@ function gameReducer(state: RoundsState, action: Action): RoundsState {
       return addDart(state, action.dart);
     case 'ADVANCE_TURN':
       return advanceTurn(state);
+    case 'BUY_UPGRADE':
+      return buyUpgrade(state, action.itemId);
     case 'RESTART':
       return initGameState(state.player);
     default:
@@ -53,32 +61,34 @@ function getDartColor(dartIndex: number): string {
 // ---- TurnWonOverlay ----
 
 function TurnWonOverlay({
-  turnScore,
+  score,
   turnTarget,
+  reward,
+  onShop,
   onContinue,
 }: {
-  turnScore: number;
+  score: number;
   turnTarget: number;
+  reward: number;
+  onShop: () => void;
   onContinue: () => void;
 }) {
-  useEffect(() => {
-    const timer = setTimeout(onContinue, 1800);
-    return () => clearTimeout(timer);
-  }, [onContinue]);
-
-  const bonus = turnScore - turnTarget;
-
   return (
-    <TouchableOpacity style={overlayStyles.wonBg} activeOpacity={1} onPress={onContinue}>
+    <View style={overlayStyles.wonBg}>
       <Text style={overlayStyles.wonTitle}>TURN CLEARED</Text>
       <Text style={overlayStyles.wonScore}>
-        {turnScore} / {turnTarget} pts
+        {score} / {turnTarget} pts
       </Text>
-      {bonus > 0 && (
-        <Text style={overlayStyles.wonBonus}>+{bonus} bonus</Text>
-      )}
-      <Text style={overlayStyles.wonContinue}>TAP TO CONTINUE</Text>
-    </TouchableOpacity>
+      <Text style={overlayStyles.wonBonus}>+${reward} earned</Text>
+      <View style={overlayStyles.wonButtons}>
+        <TouchableOpacity style={overlayStyles.shopBtn} onPress={onShop}>
+          <Text style={overlayStyles.shopBtnText}>SHOP</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={overlayStyles.continueBtn} onPress={onContinue}>
+          <Text style={overlayStyles.continueBtnText}>CONTINUE</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 }
 
@@ -93,7 +103,8 @@ function GameOverOverlay({
   onRestart: () => void;
   onMenu: () => void;
 }) {
-  const { roundIndex, turnIndex, turnTarget, turnScore, globalTurnIndex } = state;
+  const { roundIndex, turnIndex, turnTarget, turnScore, mult, globalTurnIndex } = state;
+  const score = turnScore * mult;
 
   return (
     <View style={overlayStyles.overBg}>
@@ -103,7 +114,7 @@ function GameOverOverlay({
       <View style={overlayStyles.statsCard}>
         <StatRow label="REACHED" value={`Round ${roundIndex + 1}  Turn ${turnIndex + 1}`} valueStyle={overlayStyles.statBright} />
         <StatRow label="NEEDED" value={`${turnTarget} pts`} valueStyle={overlayStyles.statGold} />
-        <StatRow label="SCORED" value={`${turnScore} pts`} valueStyle={overlayStyles.statRed} />
+        <StatRow label="SCORED" value={`${score} pts`} valueStyle={overlayStyles.statRed} />
         <StatRow label="TURNS WON" value={String(globalTurnIndex)} valueStyle={overlayStyles.statBright} />
       </View>
 
@@ -136,9 +147,10 @@ export default function GameScreen() {
   const [state, dispatch] = useReducer(gameReducer, undefined, () => initGameState(player));
 
   const [aimPreview, setAimPreview] = useState<{ x: number; y: number; radius: number } | null>(null);
+  const [showShop, setShowShop] = useState(false);
 
   const boardSize = Math.min(width, height * 0.46);
-  const bRadius = boardRadius(boardSize);
+  const bRadius = boardSize * 0.38; // mirrors boardRadius() in Dartboard.tsx
   const boardCX = boardSize / 2;
   const boardCY = boardSize / 2;
   const slingshotHeight = Math.max(155, height * 0.30);
@@ -149,7 +161,8 @@ export default function GameScreen() {
     color: getDartColor(i),
   }));
 
-  const AIM_SPREAD = bRadius * 0.22;
+  const steadyHand = state.upgrades['steady_hand'] ?? 0;
+  const AIM_SPREAD = bRadius * 0.22 * Math.pow(0.85, steadyHand);
 
   const insets = useSafeAreaInsets();
   const boardViewRef = useRef<View>(null);
@@ -182,7 +195,7 @@ export default function GameScreen() {
   const handleThrow = useCallback(
     (normX: number, normY: number) => {
       const aimX = boardCX - normX * bRadius * 1.15;
-      const aimY = boardCY + bRadius * (0.8 - 1.6 * normY);
+      const aimY = boardCY + bRadius * (1.1 - 2.2 * normY);
 
       const angle = Math.random() * 2 * Math.PI;
       const r = Math.pow(Math.random(), 1.8) * AIM_SPREAD;
@@ -221,15 +234,25 @@ export default function GameScreen() {
       }
       setAimPreview({
         x: boardCX - normX * bRadius * 1.15,
-        y: boardCY + bRadius * (0.8 - 1.6 * normY),
+        y: boardCY + bRadius * (1.1 - 2.2 * normY),
         radius: AIM_SPREAD,
       });
     },
     [boardCX, boardCY, bRadius]
   );
 
-  const showWon = state.turnOutcome === 'won' && flyingDart === null;
-  const showOver = state.turnOutcome === 'lost' && flyingDart === null;
+  const [overlayReady, setOverlayReady] = useState(false);
+  useEffect(() => {
+    if (state.turnOutcome !== null && flyingDart === null) {
+      const timer = setTimeout(() => setOverlayReady(true), 1400);
+      return () => clearTimeout(timer);
+    } else {
+      setOverlayReady(false);
+    }
+  }, [state.turnOutcome, flyingDart]);
+
+  const showWon = state.turnOutcome === 'won' && overlayReady;
+  const showOver = state.turnOutcome === 'lost' && overlayReady;
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -239,19 +262,21 @@ export default function GameScreen() {
           <Text style={styles.backText}>Menu</Text>
         </TouchableOpacity>
         <Text style={styles.modeLabel}>
-          R{state.roundIndex + 1}{'  '}T{state.turnIndex + 1}/3
+          ROUND {state.roundIndex + 1} - TURN {state.turnIndex + 1}
         </Text>
-        <View style={{ width: 60 }} />
-      </View>
-
-      {/* Dartboard */}
-      <View ref={boardViewRef} style={styles.boardContainer} onLayout={onBoardLayout}>
-        <Dartboard size={boardSize} darts={dartMarkers} aimIndicator={aimPreview} />
+        <Text style={styles.currencyText}>${state.currency}</Text>
       </View>
 
       {/* Scoreboard */}
       <View style={styles.scoreboardContainer}>
         <Scoreboard state={state} />
+      </View>
+
+      {/* Dartboard */}
+      <View ref={boardViewRef} style={styles.boardContainer} onLayout={onBoardLayout}>
+        <Suspense fallback={<View style={{ width: boardSize, height: boardSize }} />}>
+          <Dartboard size={boardSize} darts={dartMarkers} aimIndicator={aimPreview} />
+        </Suspense>
       </View>
 
       {/* Slingshot throw zone */}
@@ -274,33 +299,51 @@ export default function GameScreen() {
           </View>
         </View>
 
-        <Slingshot
-          width={width}
-          height={slingshotHeight - 44}
-          disabled={state.turnOutcome !== null || flyingDart !== null}
-          onThrow={handleThrow}
-          onAimUpdate={handleAimUpdate}
-        />
+        <Suspense fallback={null}>
+          <Slingshot
+            width={width}
+            height={slingshotHeight - 44}
+            disabled={state.turnOutcome !== null || flyingDart !== null}
+            onThrow={handleThrow}
+            onAimUpdate={handleAimUpdate}
+          />
+        </Suspense>
       </View>
 
       {/* Flying dart animation */}
       {flyingDart && (
-        <FlyingDartOverlay
-          from={flyingDart.from}
-          to={flyingDart.to}
-          flightColor={flyingDart.flightColor}
-          width={width}
-          height={height - insets.top - insets.bottom}
-          onLanded={onDartLanded}
-        />
+        <Suspense fallback={null}>
+          <FlyingDartOverlay
+            from={flyingDart.from}
+            to={flyingDart.to}
+            flightColor={flyingDart.flightColor}
+            width={width}
+            height={height - insets.top - insets.bottom}
+            onLanded={onDartLanded}
+          />
+        </Suspense>
       )}
 
       {/* Turn Won overlay */}
-      {showWon && (
+      {showWon && !showShop && (
         <TurnWonOverlay
-          turnScore={state.turnScore}
+          score={state.turnScore * state.mult}
           turnTarget={state.turnTarget}
+          reward={state.lastTurnReward}
+          onShop={() => setShowShop(true)}
           onContinue={() => dispatch({ type: 'ADVANCE_TURN' })}
+        />
+      )}
+
+      {/* Shop */}
+      {showShop && (
+        <ShopModal
+          state={state}
+          onBuy={itemId => dispatch({ type: 'BUY_UPGRADE', itemId })}
+          onClose={() => {
+            setShowShop(false);
+            dispatch({ type: 'ADVANCE_TURN' });
+          }}
         />
       )}
 
@@ -331,6 +374,14 @@ const styles = StyleSheet.create({
     borderBottomColor: COLORS.bgCard,
   },
   backBtn: { width: 70 },
+  currencyText: {
+    fontFamily: PIXEL_FONT,
+    color: COLORS.gold,
+    fontSize: 9,
+    letterSpacing: 1,
+    width: 60,
+    textAlign: 'right',
+  },
   backText: {
     fontFamily: PIXEL_FONT,
     color: COLORS.cyan,
@@ -347,7 +398,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   scoreboardContainer: {
-    flex: 1,
     paddingHorizontal: 8,
   },
   slingshotZone: {
@@ -426,12 +476,36 @@ const overlayStyles = StyleSheet.create({
     fontSize: 9,
     letterSpacing: 2,
   },
-  wonContinue: {
+  wonButtons: {
+    flexDirection: 'row',
+    gap: 16,
+    marginTop: 8,
+  },
+  shopBtn: {
+    backgroundColor: COLORS.gold,
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    borderWidth: 2,
+    borderColor: COLORS.bright,
+    ...pixelShadow,
+  },
+  shopBtnText: {
+    fontFamily: PIXEL_FONT,
+    color: COLORS.bgDark,
+    fontSize: 10,
+    letterSpacing: 2,
+  },
+  continueBtn: {
+    borderWidth: 2,
+    borderColor: COLORS.muted,
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+  },
+  continueBtnText: {
     fontFamily: PIXEL_FONT,
     color: COLORS.muted,
-    fontSize: 7,
+    fontSize: 10,
     letterSpacing: 2,
-    marginTop: 8,
   },
   overBg: {
     position: 'absolute',

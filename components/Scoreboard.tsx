@@ -1,23 +1,36 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Animated, View, Text, StyleSheet } from 'react-native';
 import { PIXEL_FONT, pixelShadowSm, COLORS } from '../lib/theme';
 import { RoundsState } from '../lib/gameLogic';
 import { DartHit } from '../lib/dartboard';
 
 interface Props { state: RoundsState; }
 
+// Returns the combo multiplier (1 = none, 2 = pair, 3 = triple) from a dart list
+function getComboMult(darts: DartHit[]): number {
+  const counts: Record<number, number> = {};
+  for (const d of darts) {
+    if (d.score > 0) counts[d.segment] = (counts[d.segment] ?? 0) + 1;
+  }
+  const max = Object.values(counts).reduce((m, v) => Math.max(m, v), 0);
+  return max >= 3 ? 3 : max >= 2 ? 2 : 1;
+}
+
 export default function Scoreboard({ state }: Props) {
-  const { turnTarget, turnScore, roundIndex, turnIndex, currentTurnDarts } = state;
-  const delta = turnTarget - turnScore;
-  const targetMet = turnScore >= turnTarget;
+  const { turnTarget, turnScore, currentTurnDarts, mult } = state;
+  const score = turnScore * mult;
+  const delta = turnTarget - score;
+  const targetMet = score >= turnTarget;
+  const comboMult = getComboMult(currentTurnDarts);
 
   return (
     <View style={styles.container}>
       <View style={styles.row}>
         <StatBox label="TARGET" value={String(turnTarget)} valueStyle={styles.goldValue} />
-        <StatBox label="THIS TURN" value={String(turnScore)} valueStyle={styles.cyanValue} />
-        <StatBox label="ROUND" value={String(roundIndex + 1)} />
-        <StatBox label="TURN" value={`${turnIndex + 1}/3`} />
+        <AnimatedStatBox label="POINTS" numericValue={turnScore} labelStyle={styles.cyanLabel} valueStyle={styles.cyanValue} deltaColor={COLORS.cyan} />
+        <Text style={styles.multSymbol}>×</Text>
+        <AnimatedStatBox label="MULT" numericValue={mult} comboMult={comboMult} labelStyle={styles.redLabel} valueStyle={styles.redValue} deltaColor={COLORS.red} />
+        <AnimatedStatBox label="SCORE" numericValue={score} valueStyle={styles.goldValue} deltaColor={COLORS.gold} />
       </View>
 
       <View style={styles.divider} />
@@ -31,6 +44,91 @@ export default function Scoreboard({ state }: Props) {
   );
 }
 
+// ---- Floating popup (text + color) ----
+
+function DeltaPopup({ text, color }: { text: string; color: string }) {
+  const translateY = useRef(new Animated.Value(0)).current;
+  const opacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(translateY, { toValue: -38, duration: 750, useNativeDriver: true }),
+      Animated.sequence([
+        Animated.delay(300),
+        Animated.timing(opacity, { toValue: 0, duration: 450, useNativeDriver: true }),
+      ]),
+    ]).start();
+  }, []);
+
+  return (
+    <Animated.Text style={[styles.deltaPopup, { color, transform: [{ translateY }], opacity }]}>
+      {text}
+    </Animated.Text>
+  );
+}
+
+// ---- Stat box with animated delta ----
+
+type Popup = { id: number; text: string; color: string };
+
+function AnimatedStatBox({
+  label,
+  numericValue,
+  comboMult,
+  valueStyle,
+  labelStyle,
+  deltaColor,
+}: {
+  label: string;
+  numericValue: number;
+  comboMult?: number;
+  valueStyle?: object;
+  labelStyle?: object;
+  deltaColor: string;
+}) {
+  const prevRef = useRef(numericValue);
+  const prevComboRef = useRef(comboMult ?? 1);
+  const [popups, setPopups] = useState<Popup[]>([]);
+
+  const spawn = useCallback((text: string, color: string, delay = 0) => {
+    const id = Date.now() + Math.random();
+    setTimeout(() => {
+      setPopups(p => [...p, { id, text, color }]);
+      setTimeout(() => setPopups(p => p.filter(x => x.id !== id)), 900);
+    }, delay);
+  }, []);
+
+  useEffect(() => {
+    const diff = numericValue - prevRef.current;
+    const prevCombo = prevComboRef.current;
+    const newCombo = comboMult ?? 1;
+    prevRef.current = numericValue;
+    prevComboRef.current = newCombo;
+
+    if (diff <= 0) return;
+
+    if (newCombo > prevCombo) {
+      // Combo activated or upgraded: show "+1" then "×N"
+      spawn('+1', deltaColor, 0);
+      spawn(`×${newCombo}`, COLORS.gold, 380);
+    } else {
+      spawn(`+${diff}`, deltaColor, 0);
+    }
+  }, [numericValue]);
+
+  return (
+    <View style={[styles.stat, { overflow: 'visible' }]}>
+      <Text style={[styles.statLabel, labelStyle]}>{label}</Text>
+      <Text style={[styles.statValue, valueStyle]}>{numericValue}</Text>
+      {popups.map(({ id, text, color }) => (
+        <DeltaPopup key={id} text={text} color={color} />
+      ))}
+    </View>
+  );
+}
+
+// ---- Plain stat box ----
+
 function StatBox({ label, value, valueStyle }: { label: string; value: string; valueStyle?: object }) {
   return (
     <View style={styles.stat}>
@@ -40,13 +138,14 @@ function StatBox({ label, value, valueStyle }: { label: string; value: string; v
   );
 }
 
+// ---- Dart chips ----
+
 function DartChips({ darts }: { darts: DartHit[] }) {
   return (
     <View style={styles.dartHistory}>
       {darts.map((d, i) => (
         <View key={i} style={[styles.dartChip, d.score === 0 && styles.dartChipMiss]}>
           <Text style={styles.dartChipLabel}>{d.label}</Text>
-          <Text style={styles.dartChipScore}>{d.score}</Text>
         </View>
       ))}
       {[...Array(3 - darts.length)].map((_, i) => (
@@ -87,13 +186,23 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginTop: 4,
   },
-  goldValue: {
-    color: COLORS.gold,
-    fontSize: 18,
+  goldValue: { color: COLORS.gold, fontSize: 18 },
+  cyanValue: { color: COLORS.cyan, fontSize: 18 },
+  cyanLabel: { color: COLORS.cyan },
+  redLabel:  { color: COLORS.red },
+  redValue:  { color: COLORS.red, fontSize: 18 },
+  multSymbol: {
+    fontFamily: PIXEL_FONT,
+    color: COLORS.muted,
+    fontSize: 14,
+    alignSelf: 'center',
   },
-  cyanValue: {
-    color: COLORS.cyan,
-    fontSize: 18,
+  deltaPopup: {
+    position: 'absolute',
+    top: 0,
+    fontFamily: PIXEL_FONT,
+    fontSize: 11,
+    letterSpacing: 1,
   },
   divider: {
     height: 2,
@@ -115,18 +224,11 @@ const styles = StyleSheet.create({
     borderColor: COLORS.bgCard,
     ...pixelShadowSm,
   },
-  dartChipMiss: {
-    borderColor: COLORS.red,
-  },
+  dartChipMiss: { borderColor: COLORS.red },
   dartChipLabel: {
     fontFamily: PIXEL_FONT,
     color: COLORS.muted,
     fontSize: 7,
-  },
-  dartChipScore: {
-    fontFamily: PIXEL_FONT,
-    color: COLORS.bright,
-    fontSize: 9,
   },
   dartChipEmpty: {
     width: 68,
@@ -142,10 +244,6 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     textAlign: 'center',
   },
-  deltaHintNeed: {
-    color: COLORS.muted,
-  },
-  deltaHintMet: {
-    color: COLORS.cyan,
-  },
+  deltaHintNeed: { color: COLORS.muted },
+  deltaHintMet:  { color: COLORS.cyan },
 });
