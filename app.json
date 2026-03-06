@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "Darts",
+    "slug": "dart-game",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "scheme": "dartgame",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.dartgame.app"
+    },
+    "android": {
+      "package": "com.dartgame.app"
+    },
+    "plugins": ["expo-router"]
+  }
+}
