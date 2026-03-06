@@ -24,7 +24,10 @@ import {
   initGameState,
   addDart,
   advanceTurn,
-  buyUpgrade,
+  buyItem,
+  claimPackItem,
+  buyPowerup,
+  getAimFactor,
 } from '../lib/gameLogic';
 import { PIXEL_FONT, pixelShadow, pixelShadowSm, COLORS } from '../lib/theme';
 
@@ -33,7 +36,9 @@ import { PIXEL_FONT, pixelShadow, pixelShadowSm, COLORS } from '../lib/theme';
 type Action =
   | { type: 'THROW'; dart: DartHit }
   | { type: 'ADVANCE_TURN' }
-  | { type: 'BUY_UPGRADE'; itemId: string }
+  | { type: 'BUY_ITEM'; defId: string }
+  | { type: 'CLAIM_PACK'; packType: 'decoration' | 'item'; chosenDefId: string }
+  | { type: 'BUY_POWERUP' }
   | { type: 'RESTART' };
 
 function gameReducer(state: RoundsState, action: Action): RoundsState {
@@ -43,8 +48,12 @@ function gameReducer(state: RoundsState, action: Action): RoundsState {
       return addDart(state, action.dart);
     case 'ADVANCE_TURN':
       return advanceTurn(state);
-    case 'BUY_UPGRADE':
-      return buyUpgrade(state, action.itemId);
+    case 'BUY_ITEM':
+      return buyItem(state, action.defId);
+    case 'CLAIM_PACK':
+      return claimPackItem(state, action.packType, action.chosenDefId);
+    case 'BUY_POWERUP':
+      return buyPowerup(state);
     case 'RESTART':
       return initGameState(state.player);
     default:
@@ -161,13 +170,13 @@ export default function GameScreen() {
     color: getDartColor(i),
   }));
 
-  const steadyHand = state.upgrades['steady_hand'] ?? 0;
-  const AIM_SPREAD = bRadius * 0.22 * Math.pow(0.85, steadyHand);
+  const AIM_SPREAD = bRadius * 0.22 * getAimFactor(state.ownedItems);
 
   const insets = useSafeAreaInsets();
   const boardViewRef = useRef<View>(null);
   const boardScreenYRef = useRef(0);
   const pendingDartRef = useRef<DartHit | null>(null);
+  const lastDartScoreRef = useRef(0);
   const throwContextRef = useRef({ dartCount: state.currentTurnDarts.length });
   throwContextRef.current = { dartCount: state.currentTurnDarts.length };
 
@@ -176,6 +185,8 @@ export default function GameScreen() {
     to: { x: number; y: number };
     flightColor: string;
   } | null>(null);
+  const [throwLocked, setThrowLocked] = useState(false);
+  const throwLockTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const onBoardLayout = useCallback(() => {
     boardViewRef.current?.measure((_x, _y, _w, _h, _pageX, pageY) => {
@@ -188,8 +199,15 @@ export default function GameScreen() {
     if (!dart) return;
     pendingDartRef.current = null;
     Vibration.vibrate(30);
+    lastDartScoreRef.current = dart.score;
     dispatch({ type: 'THROW', dart });
     setFlyingDart(null);
+    // Only lock if the dart scored — misses have no animations to wait for
+    if (dart.score > 0) {
+      setThrowLocked(true);
+      if (throwLockTimer.current) clearTimeout(throwLockTimer.current);
+      throwLockTimer.current = setTimeout(() => setThrowLocked(false), 3100);
+    }
   }, []);
 
   const handleThrow = useCallback(
@@ -244,7 +262,9 @@ export default function GameScreen() {
   const [overlayReady, setOverlayReady] = useState(false);
   useEffect(() => {
     if (state.turnOutcome !== null && flyingDart === null) {
-      const timer = setTimeout(() => setOverlayReady(true), 1400);
+      // If the dart scored, wait for full animation chain; misses have no animations
+      const delay = lastDartScoreRef.current > 0 ? 3200 : 800;
+      const timer = setTimeout(() => setOverlayReady(true), delay);
       return () => clearTimeout(timer);
     } else {
       setOverlayReady(false);
@@ -303,7 +323,7 @@ export default function GameScreen() {
           <Slingshot
             width={width}
             height={slingshotHeight - 44}
-            disabled={state.turnOutcome !== null || flyingDart !== null}
+            disabled={state.turnOutcome !== null || flyingDart !== null || throwLocked}
             onThrow={handleThrow}
             onAimUpdate={handleAimUpdate}
           />
@@ -339,7 +359,9 @@ export default function GameScreen() {
       {showShop && (
         <ShopModal
           state={state}
-          onBuy={itemId => dispatch({ type: 'BUY_UPGRADE', itemId })}
+          onBuyItem={defId => dispatch({ type: 'BUY_ITEM', defId })}
+          onClaimPack={(packType, chosenDefId) => dispatch({ type: 'CLAIM_PACK', packType, chosenDefId })}
+          onBuyPowerup={() => dispatch({ type: 'BUY_POWERUP' })}
           onClose={() => {
             setShowShop(false);
             dispatch({ type: 'ADVANCE_TURN' });

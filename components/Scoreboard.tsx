@@ -23,14 +23,31 @@ export default function Scoreboard({ state }: Props) {
   const targetMet = score >= turnTarget;
   const comboMult = getComboMult(currentTurnDarts);
 
+  const [multTrigger, setMultTrigger] = useState(0);
+  const [scoreTrigger, setScoreTrigger] = useState(0);
+  const multTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // POINTS done → fire MULT after its duration
+  const handlePointsDone = useCallback((duration: number) => {
+    if (multTimerRef.current) clearTimeout(multTimerRef.current);
+    multTimerRef.current = setTimeout(() => setMultTrigger(t => t + 1), duration);
+  }, []);
+
+  // MULT done → fire SCORE after its duration
+  const handleMultDone = useCallback((duration: number) => {
+    if (scoreTimerRef.current) clearTimeout(scoreTimerRef.current);
+    scoreTimerRef.current = setTimeout(() => setScoreTrigger(t => t + 1), duration);
+  }, []);
+
   return (
     <View style={styles.container}>
       <View style={styles.row}>
         <StatBox label="TARGET" value={String(turnTarget)} valueStyle={styles.goldValue} />
-        <AnimatedStatBox label="POINTS" numericValue={turnScore} labelStyle={styles.cyanLabel} valueStyle={styles.cyanValue} deltaColor={COLORS.cyan} />
+        <AnimatedStatBox label="POINTS" numericValue={turnScore} labelStyle={styles.cyanLabel} valueStyle={styles.cyanValue} deltaColor={COLORS.cyan} onAnimDone={handlePointsDone} />
         <Text style={styles.multSymbol}>×</Text>
-        <AnimatedStatBox label="MULT" numericValue={mult} comboMult={comboMult} labelStyle={styles.redLabel} valueStyle={styles.redValue} deltaColor={COLORS.red} />
-        <AnimatedStatBox label="SCORE" numericValue={score} valueStyle={styles.goldValue} deltaColor={COLORS.gold} />
+        <AnimatedStatBox label="MULT" numericValue={mult} comboMult={comboMult} labelStyle={styles.redLabel} valueStyle={styles.redValue} deltaColor={COLORS.red} triggerKey={multTrigger} onAnimDone={handleMultDone} />
+        <AnimatedStatBox label="SCORE" numericValue={score} valueStyle={styles.goldValue} deltaColor={COLORS.gold} triggerKey={scoreTrigger} />
       </View>
 
       <View style={styles.divider} />
@@ -78,6 +95,8 @@ function AnimatedStatBox({
   valueStyle,
   labelStyle,
   deltaColor,
+  triggerKey,
+  onAnimDone,
 }: {
   label: string;
   numericValue: number;
@@ -85,10 +104,16 @@ function AnimatedStatBox({
   valueStyle?: object;
   labelStyle?: object;
   deltaColor: string;
+  // undefined = fire immediately on value change (POINTS)
+  // number = hold until triggerKey increments (MULT, SCORE)
+  triggerKey?: number;
+  onAnimDone?: (duration: number) => void;
 }) {
   const prevRef = useRef(numericValue);
   const prevComboRef = useRef(comboMult ?? 1);
   const [popups, setPopups] = useState<Popup[]>([]);
+  const [displayedValue, setDisplayedValue] = useState(numericValue);
+  const pendingRef = useRef<{ diff: number; newValue: number; newCombo: number; prevCombo: number } | null>(null);
 
   const spawn = useCallback((text: string, color: string, delay = 0) => {
     const id = Date.now() + Math.random();
@@ -98,6 +123,21 @@ function AnimatedStatBox({
     }, delay);
   }, []);
 
+  const fireAnim = useCallback((diff: number, newCombo: number, prevCombo: number, newValue: number) => {
+    setDisplayedValue(newValue);
+    let duration: number;
+    if (newCombo > prevCombo) {
+      spawn('+1', deltaColor, 0);
+      spawn(`×${newCombo}`, COLORS.gold, 380);
+      duration = 380 + 900; // wait for second popup to finish
+    } else {
+      spawn(`+${diff}`, deltaColor, 0);
+      duration = 900;
+    }
+    onAnimDone?.(duration);
+  }, [spawn, deltaColor, onAnimDone]);
+
+  // Detect value changes
   useEffect(() => {
     const diff = numericValue - prevRef.current;
     const prevCombo = prevComboRef.current;
@@ -105,21 +145,35 @@ function AnimatedStatBox({
     prevRef.current = numericValue;
     prevComboRef.current = newCombo;
 
-    if (diff <= 0) return;
+    if (diff <= 0) {
+      // Reset (new turn) — update display immediately, clear any stale pending
+      setDisplayedValue(numericValue);
+      pendingRef.current = null;
+      return;
+    }
 
-    if (newCombo > prevCombo) {
-      // Combo activated or upgraded: show "+1" then "×N"
-      spawn('+1', deltaColor, 0);
-      spawn(`×${newCombo}`, COLORS.gold, 380);
+    if (triggerKey === undefined) {
+      // POINTS: fire immediately
+      fireAnim(diff, newCombo, prevCombo, numericValue);
     } else {
-      spawn(`+${diff}`, deltaColor, 0);
+      // MULT / SCORE: hold until triggerKey fires
+      pendingRef.current = { diff, newValue: numericValue, newCombo, prevCombo };
     }
   }, [numericValue]);
+
+  // Fire pending animation when parent signals this box
+  useEffect(() => {
+    if (triggerKey === undefined) return;
+    const p = pendingRef.current;
+    if (!p) return;
+    pendingRef.current = null;
+    fireAnim(p.diff, p.newCombo, p.prevCombo, p.newValue);
+  }, [triggerKey]);
 
   return (
     <View style={[styles.stat, { overflow: 'visible' }]}>
       <Text style={[styles.statLabel, labelStyle]}>{label}</Text>
-      <Text style={[styles.statValue, valueStyle]}>{numericValue}</Text>
+      <Text style={[styles.statValue, valueStyle]}>{displayedValue}</Text>
       {popups.map(({ id, text, color }) => (
         <DeltaPopup key={id} text={text} color={color} />
       ))}
