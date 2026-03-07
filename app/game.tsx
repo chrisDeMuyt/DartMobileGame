@@ -262,7 +262,7 @@ export default function GameScreen() {
         flightColor: getDartColor(dartCount),
       });
     },
-    [boardCX, boardCY, bRadius, width, height, boardSize, slingshotHeight, insets]
+    [boardCX, boardCY, bRadius, width, height, boardSize, slingshotHeight, insets, AIM_SPREAD]
   );
 
   const handleAimUpdate = useCallback(
@@ -277,7 +277,7 @@ export default function GameScreen() {
         radius: AIM_SPREAD,
       });
     },
-    [boardCX, boardCY, bRadius]
+    [boardCX, boardCY, bRadius, AIM_SPREAD]
   );
 
   // Find the instanceId of the most-recently-bought unassigned board item for a given defId
@@ -399,7 +399,7 @@ export default function GameScreen() {
           score={state.turnScore * state.mult}
           turnTarget={state.turnTarget}
           reward={state.lastTurnReward}
-          onShop={() => setShowShop(true)}
+          onShop={() => { dispatch({ type: 'ADVANCE_TURN' }); setShowShop(true); }}
           onContinue={() => dispatch({ type: 'ADVANCE_TURN' })}
         />
       )}
@@ -411,10 +411,7 @@ export default function GameScreen() {
           onBuyItem={handleBuyItem}
           onClaimPack={handleClaimPack}
           onBuyPowerup={() => dispatch({ type: 'BUY_POWERUP' })}
-          onClose={() => {
-            setShowShop(false);
-            dispatch({ type: 'ADVANCE_TURN' });
-          }}
+          onClose={() => setShowShop(false)}
         />
       )}
 

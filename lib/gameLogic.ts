@@ -50,6 +50,7 @@ export interface RoundsState {
   shopOffers: ShopOffers;
   lastTurnReward: number;
   lastDartBonus: number;
+  lastDartMultBonus: number;
 }
 
 export type GameState = RoundsState;
@@ -74,9 +75,9 @@ function pick2Random<T>(arr: T[]): [T, T] | null {
   return [shuffled[0], shuffled[1]];
 }
 
-function eligiblePool(categories: ItemCategory[], ownedDefIds: string[]) {
+function eligiblePool(categories: ItemCategory[], ownedDefIds: string[], globalTurnIndex: number) {
   return ITEMS.filter(
-    def => (categories as string[]).includes(def.category) && canPurchase(def.id, ownedDefIds)
+    def => (categories as string[]).includes(def.category) && canPurchase(def.id, ownedDefIds, globalTurnIndex)
   );
 }
 
@@ -86,14 +87,15 @@ function eligiblePool(categories: ItemCategory[], ownedDefIds: string[]) {
  */
 export function generateShopOffers(
   ownedItems: OwnedItem[],
+  globalTurnIndex: number,
   keepPowerup?: string | null,
 ): ShopOffers {
   const ownedDefIds = ownedItems.map(i => i.defId);
 
-  const itemPool       = eligiblePool(['board', 'dart', 'decoration'], ownedDefIds);
-  const decorationPool = eligiblePool(['decoration'], ownedDefIds);
-  const boardDartPool  = eligiblePool(['board', 'dart'], ownedDefIds);
-  const powerupPool    = eligiblePool(['powerup'], ownedDefIds);
+  const itemPool       = eligiblePool(['board', 'dart', 'decoration'], ownedDefIds, globalTurnIndex);
+  const decorationPool = eligiblePool(['decoration'], ownedDefIds, globalTurnIndex);
+  const boardDartPool  = eligiblePool(['board', 'dart'], ownedDefIds, globalTurnIndex);
+  const powerupPool    = eligiblePool(['powerup'], ownedDefIds, globalTurnIndex);
 
   const itemOffer  = pickRandom(itemPool);
   const decoPair   = pick2Random(decorationPool);
@@ -130,25 +132,35 @@ export function initGameState(player: Player): RoundsState {
     mult: 0,
     currency: 10,
     ownedItems: [],
-    shopOffers: { ...generateShopOffers([]), item: 'bonus_sector' },
+    shopOffers: { ...generateShopOffers([], 0), item: 'mult_sector' },
     lastTurnReward: 0,
     lastDartBonus: 0,
+    lastDartMultBonus: 0,
   };
 }
 
 // ---- Mult computation ----
 
-function computeMult(darts: DartHit[]): number {
+function computeMult(darts: DartHit[], ownedItems: OwnedItem[]): number {
   const scoring = darts.filter(d => d.score > 0);
   let mult = 0;
   const counts: Record<number, number> = {};
   for (const d of scoring) {
     counts[d.segment] = (counts[d.segment] ?? 0) + 1;
     const n = counts[d.segment];
+    let dartMultBonus = 0;
+    for (const item of ownedItems) {
+      const bi = item as OwnedBoardItem;
+      if (bi.sector == null || bi.sector !== d.segment) continue;
+      const def = getItemDef(item.defId);
+      if (def?.category === 'board' && def.effect.type === 'mult_sector') {
+        dartMultBonus += def.effect.multBonus;
+      }
+    }
     if (n >= 2) {
-      mult = (mult + 1) * n;
+      mult = (mult + 1 + dartMultBonus) * n;
     } else {
-      mult += 1;
+      mult += 1 + dartMultBonus;
     }
   }
   return mult;
@@ -176,12 +188,25 @@ export function addDart(state: RoundsState, dart: DartHit): RoundsState {
     }
   }
 
-  const newScore = state.turnScore + dart.score + bonus;
-  const newMult  = computeMult(newDarts);
-  if (newDarts.length < 3) {
-    return { ...state, currentTurnDarts: newDarts, turnScore: newScore, mult: newMult, lastDartBonus: bonus };
+  // Current dart's mult bonus only (for animation)
+  let multBonus = 0;
+  if (dart.score > 0) {
+    for (const item of state.ownedItems) {
+      const bi = item as OwnedBoardItem;
+      if (bi.sector == null || bi.sector !== dart.segment) continue;
+      const def = getItemDef(item.defId);
+      if (def?.category === 'board' && def.effect.type === 'mult_sector') {
+        multBonus += def.effect.multBonus;
+      }
+    }
   }
-  const won    = newScore * newMult >= state.turnTarget;
+
+  const newScore = state.turnScore + dart.score + bonus;
+  const newMult  = computeMult(newDarts, state.ownedItems);
+  const won      = newScore * newMult >= state.turnTarget;
+  if (!won && newDarts.length < 3) {
+    return { ...state, currentTurnDarts: newDarts, turnScore: newScore, mult: newMult, lastDartBonus: bonus, lastDartMultBonus: multBonus };
+  }
   const reward = won ? TURN_REWARDS[state.turnIndex] : 0;
   return {
     ...state,
@@ -192,6 +217,7 @@ export function addDart(state: RoundsState, dart: DartHit): RoundsState {
     currency: state.currency + reward,
     lastTurnReward: reward,
     lastDartBonus: bonus,
+    lastDartMultBonus: multBonus,
   };
 }
 
@@ -205,6 +231,7 @@ export function advanceTurn(state: RoundsState): RoundsState {
   // Item/pack offers refresh every turn; powerup only refreshes at round boundaries.
   const newOffers = generateShopOffers(
     state.ownedItems,
+    newGlobalTurnIndex,
     isNewRound ? undefined : state.shopOffers.powerup,
   );
 
@@ -221,6 +248,7 @@ export function advanceTurn(state: RoundsState): RoundsState {
     shopOffers:       newOffers,
     lastTurnReward:   0,
     lastDartBonus:    0,
+    lastDartMultBonus: 0,
   };
 }
 
@@ -232,12 +260,25 @@ export function buyItem(state: RoundsState, defId: string): RoundsState {
   if (!def) return state;
   const cost = getAdjustedCost(def.cost, state.ownedItems);
   if (state.currency < cost) return state;
+  const newOwnedItems = [...state.ownedItems, createOwnedItem(defId)];
+  const newOwnedDefIds = newOwnedItems.map(i => i.defId);
+
+  // If this purchase unlocks a powerup that requires it, re-roll the powerup slot
+  const unlocksNewPowerup = ITEMS.some(
+    item => item.category === 'powerup'
+      && item.requires === defId
+      && canPurchase(item.id, newOwnedDefIds, state.globalTurnIndex),
+  );
+  const powerup = unlocksNewPowerup
+    ? pickRandom(ITEMS.filter(item => item.category === 'powerup' && canPurchase(item.id, newOwnedDefIds, state.globalTurnIndex)))?.id ?? state.shopOffers.powerup
+    : state.shopOffers.powerup;
+
   return {
     ...state,
     currency:   state.currency - cost,
-    ownedItems: [...state.ownedItems, createOwnedItem(defId)],
+    ownedItems: newOwnedItems,
     // Clear the offer slot so it can't be bought again this visit
-    shopOffers: { ...state.shopOffers, item: null },
+    shopOffers: { ...state.shopOffers, item: null, powerup },
   };
 }
 

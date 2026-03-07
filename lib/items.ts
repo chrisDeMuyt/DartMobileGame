@@ -41,6 +41,8 @@ interface BaseItemDef {
   cost: number;
   /** Item id that must be owned before this appears as purchasable */
   requires?: string;
+  /** Minimum globalTurnIndex (turns beaten) before this item appears in the shop */
+  minGlobalTurn?: number;
   /** Max number of instances the player can own (undefined = unlimited) */
   maxOwned?: number;
 }
@@ -208,12 +210,13 @@ export const ITEMS: ItemDef[] = [
     id: 'sharpshooter_plus',
     name: 'Sharpshooter+',
     category: 'powerup',
-    description: 'Reduces aim circle by another 25%. Requires Sharpshooter.',
+    description: 'Further reduces aim circle to 50% of original size. Requires Sharpshooter.',
     rarity: 'uncommon',
     cost: 20,
     maxOwned: 1,
     requires: 'sharpshooter',
-    effect: { type: 'reduce_aim', factor: 0.75 },
+    minGlobalTurn: 3,
+    effect: { type: 'reduce_aim', factor: 0.6667 },
   },
   {
     id: 'sale',
@@ -301,10 +304,11 @@ export function prerequisiteMet(defId: string, ownedDefIds: string[]): boolean {
  * Returns true if the player can purchase one more of this item.
  * Checks both prerequisite and maxOwned cap.
  */
-export function canPurchase(defId: string, ownedDefIds: string[]): boolean {
+export function canPurchase(defId: string, ownedDefIds: string[], globalTurnIndex = 0): boolean {
   const def = getItemDef(defId);
   if (!def) return false;
   if (!prerequisiteMet(defId, ownedDefIds)) return false;
+  if (def.minGlobalTurn !== undefined && globalTurnIndex < def.minGlobalTurn) return false;
   if (def.maxOwned !== undefined) {
     const count = ownedDefIds.filter(id => id === defId).length;
     if (count >= def.maxOwned) return false;

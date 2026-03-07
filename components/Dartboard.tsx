@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import {
   Canvas,
   Path,
+  Rect,
   Circle,
   Text,
   matchFont,
@@ -57,6 +58,22 @@ function makeStarField(size: number, spacing = 20, outerR = 5, innerR = 2) {
         else path.lineTo(x + r * Math.cos(angle), y + r * Math.sin(angle));
       }
       path.close();
+    }
+  }
+  return path;
+}
+
+function makePlaidLines(size: number, spacing = 14, direction: 'h' | 'v') {
+  const path = Skia.Path.Make();
+  if (direction === 'h') {
+    for (let y = 0; y <= size + spacing; y += spacing) {
+      path.moveTo(0, y);
+      path.lineTo(size, y);
+    }
+  } else {
+    for (let x = 0; x <= size + spacing; x += spacing) {
+      path.moveTo(x, 0);
+      path.lineTo(x, size);
     }
   }
   return path;
@@ -158,6 +175,8 @@ export default function Dartboard({ size, darts = [], aimIndicator, boardEffects
   }, [size]);
 
   const starFieldPath = useMemo(() => makeStarField(size), [size]);
+  const plaidHLines = useMemo(() => makePlaidLines(size, 14, 'h'), [size]);
+  const plaidVLines = useMemo(() => makePlaidLines(size, 14, 'v'), [size]);
 
   return (
     <Canvas style={{ width: size, height: size }}>
@@ -183,45 +202,86 @@ export default function Dartboard({ size, darts = [], aimIndicator, boardEffects
       {/* Inner bull (50) */}
       <Circle cx={cx} cy={cy} r={boardR * RING_RADII.bull} color={COLORS.bull} />
 
-      {/* Bonus sector star overlays — inner and outer single only (no triple/double) */}
+      {/* Board effect overlays — inner and outer single only (no triple/double) */}
       {boardEffects?.map((effect) => {
-        if (effect.effectType !== 'bonus_sector') return null;
-
-        if (effect.sector >= 1 && effect.sector <= 20) {
-          const seg = segments.find(s => s.num === effect.sector);
-          if (!seg) return null;
-          return (
-            <React.Fragment key={`bonus-star-${effect.sector}`}>
-              <Group clip={seg.innerSingle}>
+        if (effect.effectType === 'bonus_sector') {
+          if (effect.sector >= 1 && effect.sector <= 20) {
+            const seg = segments.find(s => s.num === effect.sector);
+            if (!seg) return null;
+            return (
+              <React.Fragment key={`bonus-star-${effect.sector}`}>
+                <Group clip={seg.innerSingle}>
+                  <Path path={starFieldPath} color="rgba(245, 197, 24, 0.75)" style="fill" />
+                </Group>
+                <Group clip={seg.outerSingle}>
+                  <Path path={starFieldPath} color="rgba(245, 197, 24, 0.75)" style="fill" />
+                </Group>
+              </React.Fragment>
+            );
+          } else if (effect.sector === 25) {
+            const clipPath = Skia.Path.Make();
+            (clipPath as any).addCircle(cx, cy, boardR * RING_RADII.outerBull);
+            return (
+              <Group key={`bonus-star-${effect.sector}`} clip={clipPath}>
                 <Path path={starFieldPath} color="rgba(245, 197, 24, 0.75)" style="fill" />
               </Group>
-              <Group clip={seg.outerSingle}>
+            );
+          } else if (effect.sector === 50) {
+            const clipPath = Skia.Path.Make();
+            (clipPath as any).addCircle(cx, cy, boardR * RING_RADII.bull);
+            return (
+              <Group key={`bonus-star-${effect.sector}`} clip={clipPath}>
                 <Path path={starFieldPath} color="rgba(245, 197, 24, 0.75)" style="fill" />
               </Group>
-            </React.Fragment>
-          );
-        } else if (effect.sector === 25) {
-          const clipPath = Skia.Path.Make();
-          (clipPath as any).addCircle(cx, cy, boardR * RING_RADII.outerBull);
-          return (
-            <Group key={`bonus-star-${effect.sector}`} clip={clipPath}>
-              <Path path={starFieldPath} color="rgba(245, 197, 24, 0.75)" style="fill" />
-            </Group>
-          );
-        } else if (effect.sector === 50) {
-          const clipPath = Skia.Path.Make();
-          (clipPath as any).addCircle(cx, cy, boardR * RING_RADII.bull);
-          return (
-            <Group key={`bonus-star-${effect.sector}`} clip={clipPath}>
-              <Path path={starFieldPath} color="rgba(245, 197, 24, 0.75)" style="fill" />
-            </Group>
-          );
+            );
+          }
+          return null;
+        } else if (effect.effectType === 'mult_sector') {
+          if (effect.sector >= 1 && effect.sector <= 20) {
+            const seg = segments.find(s => s.num === effect.sector);
+            if (!seg) return null;
+            return (
+              <React.Fragment key={`mult-plaid-${effect.sector}`}>
+                <Group clip={seg.innerSingle}>
+                  <Rect x={0} y={0} width={size} height={size} color="rgba(10, 30, 80, 0.75)" />
+                  <Path path={plaidHLines} color="rgba(255, 255, 255, 0.55)" style="stroke" strokeWidth={2} />
+                  <Path path={plaidVLines} color="rgba(100, 180, 255, 0.55)" style="stroke" strokeWidth={2} />
+                </Group>
+                <Group clip={seg.outerSingle}>
+                  <Rect x={0} y={0} width={size} height={size} color="rgba(10, 30, 80, 0.75)" />
+                  <Path path={plaidHLines} color="rgba(255, 255, 255, 0.55)" style="stroke" strokeWidth={2} />
+                  <Path path={plaidVLines} color="rgba(100, 180, 255, 0.55)" style="stroke" strokeWidth={2} />
+                </Group>
+              </React.Fragment>
+            );
+          } else if (effect.sector === 25) {
+            const clipPath = Skia.Path.Make();
+            (clipPath as any).addCircle(cx, cy, boardR * RING_RADII.outerBull);
+            return (
+              <Group key={`mult-plaid-${effect.sector}`} clip={clipPath}>
+                <Rect x={0} y={0} width={size} height={size} color="rgba(10, 30, 80, 0.75)" />
+                <Path path={plaidHLines} color="rgba(255, 255, 255, 0.55)" style="stroke" strokeWidth={2} />
+                <Path path={plaidVLines} color="rgba(100, 180, 255, 0.55)" style="stroke" strokeWidth={2} />
+              </Group>
+            );
+          } else if (effect.sector === 50) {
+            const clipPath = Skia.Path.Make();
+            (clipPath as any).addCircle(cx, cy, boardR * RING_RADII.bull);
+            return (
+              <Group key={`mult-plaid-${effect.sector}`} clip={clipPath}>
+                <Rect x={0} y={0} width={size} height={size} color="rgba(10, 30, 80, 0.75)" />
+                <Path path={plaidHLines} color="rgba(255, 255, 255, 0.55)" style="stroke" strokeWidth={2} />
+                <Path path={plaidVLines} color="rgba(100, 180, 255, 0.55)" style="stroke" strokeWidth={2} />
+              </Group>
+            );
+          }
+          return null;
         }
         return null;
       })}
 
-      {/* Re-render inner bull on top when sector 25 has bonus (stars only on ring) */}
-      {boardEffects?.some(e => e.sector === 25 && e.effectType === 'bonus_sector') && (
+      {/* Re-render inner bull on top when sector 25 has an overlay (effect only on ring) */}
+      {boardEffects?.some(e => e.sector === 25 && (e.effectType === 'bonus_sector' || e.effectType === 'mult_sector')) && (
         <Circle cx={cx} cy={cy} r={boardR * RING_RADII.bull} color={COLORS.bull} />
       )}
 
