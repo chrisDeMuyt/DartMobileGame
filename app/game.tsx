@@ -1,4 +1,4 @@
-import React, { useReducer, useCallback, useState, useRef, useEffect, Suspense, lazy } from 'react';
+import React, { useReducer, useCallback, useState, useRef, useEffect, Suspense, lazy, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,12 +9,13 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import type { DartMarker } from '../components/Dartboard';
+import type { DartMarker, BoardEffectMarker } from '../components/Dartboard';
 // Lazy imports so @shopify/react-native-skia (and Skia.web.js) is only evaluated
 // after global.CanvasKit is set (guarded by skiaReady in _layout.tsx).
 const Dartboard = lazy(() => import('../components/Dartboard'));
 const FlyingDartOverlay = lazy(() => import('../components/FlyingDartOverlay'));
 const Slingshot = lazy(() => import('../components/Slingshot'));
+const BoardSectorPicker = lazy(() => import('../components/BoardSectorPicker'));
 import Scoreboard from '../components/Scoreboard';
 import ShopModal from '../components/ShopModal';
 import { getDartScore, DartHit } from '../lib/dartboard';
@@ -27,8 +28,11 @@ import {
   buyItem,
   claimPackItem,
   buyPowerup,
+  assignBoardSector,
   getAimFactor,
 } from '../lib/gameLogic';
+import { getItemDef } from '../lib/items';
+import type { OwnedBoardItem } from '../lib/items';
 import { PIXEL_FONT, pixelShadow, pixelShadowSm, COLORS } from '../lib/theme';
 
 // ---- Reducer ----
@@ -39,6 +43,7 @@ type Action =
   | { type: 'BUY_ITEM'; defId: string }
   | { type: 'CLAIM_PACK'; packType: 'decoration' | 'item'; chosenDefId: string }
   | { type: 'BUY_POWERUP' }
+  | { type: 'ASSIGN_BOARD_SECTOR'; instanceId: string; sector: number }
   | { type: 'RESTART' };
 
 function gameReducer(state: RoundsState, action: Action): RoundsState {
@@ -54,6 +59,8 @@ function gameReducer(state: RoundsState, action: Action): RoundsState {
       return claimPackItem(state, action.packType, action.chosenDefId);
     case 'BUY_POWERUP':
       return buyPowerup(state);
+    case 'ASSIGN_BOARD_SECTOR':
+      return assignBoardSector(state, action.instanceId, action.sector);
     case 'RESTART':
       return initGameState(state.player);
     default:
@@ -157,6 +164,7 @@ export default function GameScreen() {
 
   const [aimPreview, setAimPreview] = useState<{ x: number; y: number; radius: number } | null>(null);
   const [showShop, setShowShop] = useState(false);
+  const [pendingBoardDefId, setPendingBoardDefId] = useState<string | null>(null);
 
   const boardSize = Math.min(width, height * 0.46);
   const bRadius = boardSize * 0.38; // mirrors boardRadius() in Dartboard.tsx
@@ -171,6 +179,19 @@ export default function GameScreen() {
   }));
 
   const AIM_SPREAD = bRadius * 0.22 * getAimFactor(state.ownedItems);
+
+  const boardEffects = useMemo<BoardEffectMarker[]>(() =>
+    state.ownedItems
+      .filter(item => {
+        const def = getItemDef(item.defId);
+        return def?.category === 'board' && (item as OwnedBoardItem).sector !== null;
+      })
+      .map(item => ({
+        sector: (item as OwnedBoardItem).sector!,
+        effectType: (getItemDef(item.defId) as any).effect.type,
+      })),
+    [state.ownedItems],
+  );
 
   const insets = useSafeAreaInsets();
   const boardViewRef = useRef<View>(null);
@@ -259,6 +280,34 @@ export default function GameScreen() {
     [boardCX, boardCY, bRadius]
   );
 
+  // Find the instanceId of the most-recently-bought unassigned board item for a given defId
+  const getPendingBoardInstanceId = (defId: string): string | null => {
+    for (let i = state.ownedItems.length - 1; i >= 0; i--) {
+      const item = state.ownedItems[i];
+      if (item.defId === defId && (item as OwnedBoardItem).sector === null) {
+        return item.instanceId;
+      }
+    }
+    return null;
+  };
+
+  const handleBuyItem = (defId: string) => {
+    dispatch({ type: 'BUY_ITEM', defId });
+    if (getItemDef(defId)?.category === 'board') setPendingBoardDefId(defId);
+  };
+
+  const handleClaimPack = (packType: 'decoration' | 'item', chosenDefId: string) => {
+    dispatch({ type: 'CLAIM_PACK', packType, chosenDefId });
+    if (getItemDef(chosenDefId)?.category === 'board') setPendingBoardDefId(chosenDefId);
+  };
+
+  const handleSectorConfirm = (sector: number) => {
+    if (!pendingBoardDefId) return;
+    const instanceId = getPendingBoardInstanceId(pendingBoardDefId);
+    if (instanceId) dispatch({ type: 'ASSIGN_BOARD_SECTOR', instanceId, sector });
+    setPendingBoardDefId(null);
+  };
+
   const [overlayReady, setOverlayReady] = useState(false);
   useEffect(() => {
     if (state.turnOutcome !== null && flyingDart === null) {
@@ -295,7 +344,7 @@ export default function GameScreen() {
       {/* Dartboard */}
       <View ref={boardViewRef} style={styles.boardContainer} onLayout={onBoardLayout}>
         <Suspense fallback={<View style={{ width: boardSize, height: boardSize }} />}>
-          <Dartboard size={boardSize} darts={dartMarkers} aimIndicator={aimPreview} />
+          <Dartboard size={boardSize} darts={dartMarkers} aimIndicator={aimPreview} boardEffects={boardEffects} />
         </Suspense>
       </View>
 
@@ -359,8 +408,8 @@ export default function GameScreen() {
       {showShop && (
         <ShopModal
           state={state}
-          onBuyItem={defId => dispatch({ type: 'BUY_ITEM', defId })}
-          onClaimPack={(packType, chosenDefId) => dispatch({ type: 'CLAIM_PACK', packType, chosenDefId })}
+          onBuyItem={handleBuyItem}
+          onClaimPack={handleClaimPack}
           onBuyPowerup={() => dispatch({ type: 'BUY_POWERUP' })}
           onClose={() => {
             setShowShop(false);
@@ -368,6 +417,24 @@ export default function GameScreen() {
           }}
         />
       )}
+
+      {/* Board sector picker — shown after buying a board-category item */}
+      {pendingBoardDefId && (() => {
+        const def = getItemDef(pendingBoardDefId);
+        if (!def) return null;
+        const pickerSize = Math.min(width * 0.85, 300);
+        return (
+          <Suspense fallback={null}>
+            <BoardSectorPicker
+              size={pickerSize}
+              itemName={def.name}
+              itemDescription={def.description}
+              onConfirm={handleSectorConfirm}
+              onSkip={() => setPendingBoardDefId(null)}
+            />
+          </Suspense>
+        );
+      })()}
 
       {/* Game Over overlay */}
       {showOver && (

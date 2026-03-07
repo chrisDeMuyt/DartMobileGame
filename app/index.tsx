@@ -9,9 +9,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { PIXEL_FONT, pixelShadow, pixelShadowSm, COLORS } from '../lib/theme';
+import { useMuteState, toggleMusicMute } from '../hooks/useBackgroundMusic';
 
 export default function HomeScreen() {
   const [playerName, setPlayerName] = useState('Player 1');
+  const isMuted = useMuteState();
 
   function startGame() {
     router.push({ pathname: '/game', params: { playerName: playerName.trim() || 'Player 1' } });
@@ -38,6 +40,10 @@ export default function HomeScreen() {
           placeholderTextColor="#7ab3cc"
           maxLength={16}
         />
+
+        <TouchableOpacity style={styles.muteBtn} onPress={toggleMusicMute}>
+          <Text style={styles.muteBtnText}>{isMuted ? 'MUSIC: OFF' : 'MUSIC: ON'}</Text>
+        </TouchableOpacity>
 
         <TouchableOpacity style={styles.startBtn} onPress={startGame}>
           <Text style={styles.startBtnText}>Start Game</Text>
@@ -107,6 +113,19 @@ const styles = StyleSheet.create({
     fontFamily: PIXEL_FONT,
     borderWidth: 2,
     borderColor: COLORS.bgCard,
+  },
+  muteBtn: {
+    alignSelf: 'center',
+    borderWidth: 2,
+    borderColor: COLORS.bgCard,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+  },
+  muteBtnText: {
+    fontFamily: PIXEL_FONT,
+    color: COLORS.muted,
+    fontSize: 7,
+    letterSpacing: 2,
   },
   startBtn: {
     backgroundColor: COLORS.gold,

@@ -1,17 +1,38 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { Audio } from 'expo-av';
 
 const TRACK = require('../assets/sounds/soundtrack.mp3');
 
-export function useBackgroundMusic() {
-  const soundRef = useRef<Audio.Sound | null>(null);
+// Module-level singleton — shared across the whole app lifetime
+let _sound: Audio.Sound | null = null;
+let _isMuted = false;
+const _listeners = new Set<(muted: boolean) => void>();
 
+function notifyListeners() {
+  _listeners.forEach(fn => fn(_isMuted));
+}
+
+export function toggleMusicMute() {
+  _isMuted = !_isMuted;
+  _sound?.setIsMutedAsync(_isMuted);
+  notifyListeners();
+}
+
+export function useMuteState(): boolean {
+  const [isMuted, setIsMuted] = useState(_isMuted);
+  useEffect(() => {
+    _listeners.add(setIsMuted);
+    return () => { _listeners.delete(setIsMuted); };
+  }, []);
+  return isMuted;
+}
+
+export function useBackgroundMusic() {
   useEffect(() => {
     let mounted = true;
 
     async function load() {
       try {
-        // playsInSilentModeIOS: true is required when staysActiveInBackground is true
         await Audio.setAudioModeAsync({
           playsInSilentModeIOS: true,
           staysActiveInBackground: false,
@@ -21,10 +42,11 @@ export function useBackgroundMusic() {
           isLooping: true,
           volume: 0.35,
           shouldPlay: true,
+          isMuted: _isMuted,
         });
 
         if (!mounted) { sound.unloadAsync(); return; }
-        soundRef.current = sound;
+        _sound = sound;
       } catch (e) {
         console.warn('[BGM]', e);
       }
@@ -33,8 +55,8 @@ export function useBackgroundMusic() {
     load();
     return () => {
       mounted = false;
-      soundRef.current?.unloadAsync();
-      soundRef.current = null;
+      _sound?.unloadAsync();
+      _sound = null;
     };
   }, []);
 }

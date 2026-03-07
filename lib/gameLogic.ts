@@ -1,6 +1,7 @@
 import { DartHit } from './dartboard';
 import {
   OwnedItem,
+  OwnedBoardItem,
   ItemCategory,
   ITEMS,
   canPurchase,
@@ -48,6 +49,7 @@ export interface RoundsState {
   ownedItems: OwnedItem[];
   shopOffers: ShopOffers;
   lastTurnReward: number;
+  lastDartBonus: number;
 }
 
 export type GameState = RoundsState;
@@ -128,8 +130,9 @@ export function initGameState(player: Player): RoundsState {
     mult: 0,
     currency: 10,
     ownedItems: [],
-    shopOffers: generateShopOffers([]),
+    shopOffers: { ...generateShopOffers([]), item: 'bonus_sector' },
     lastTurnReward: 0,
+    lastDartBonus: 0,
   };
 }
 
@@ -159,10 +162,24 @@ export function addDart(state: RoundsState, dart: DartHit): RoundsState {
   if (state.turnOutcome !== null) return state;
   if (state.currentTurnDarts.length >= 3) return state;
   const newDarts = [...state.currentTurnDarts, dart];
-  const newScore = state.turnScore + dart.score;
+
+  // Check board item effects
+  let bonus = 0;
+  if (dart.score > 0) {
+    for (const item of state.ownedItems) {
+      const bi = item as OwnedBoardItem;
+      if (bi.sector == null || bi.sector !== dart.segment) continue;
+      const def = getItemDef(item.defId);
+      if (def?.category === 'board' && def.effect.type === 'bonus_sector') {
+        bonus += def.effect.bonusPoints;
+      }
+    }
+  }
+
+  const newScore = state.turnScore + dart.score + bonus;
   const newMult  = computeMult(newDarts);
   if (newDarts.length < 3) {
-    return { ...state, currentTurnDarts: newDarts, turnScore: newScore, mult: newMult };
+    return { ...state, currentTurnDarts: newDarts, turnScore: newScore, mult: newMult, lastDartBonus: bonus };
   }
   const won    = newScore * newMult >= state.turnTarget;
   const reward = won ? TURN_REWARDS[state.turnIndex] : 0;
@@ -174,6 +191,7 @@ export function addDart(state: RoundsState, dart: DartHit): RoundsState {
     turnOutcome: won ? 'won' : 'lost',
     currency: state.currency + reward,
     lastTurnReward: reward,
+    lastDartBonus: bonus,
   };
 }
 
@@ -202,6 +220,7 @@ export function advanceTurn(state: RoundsState): RoundsState {
     mult:             0,
     shopOffers:       newOffers,
     lastTurnReward:   0,
+    lastDartBonus:    0,
   };
 }
 
@@ -257,6 +276,16 @@ export function buyPowerup(state: RoundsState): RoundsState {
     currency:   state.currency - cost,
     ownedItems: [...state.ownedItems, createOwnedItem(defId)],
     shopOffers: { ...state.shopOffers, powerup: null },
+  };
+}
+
+/** Assign a board sector to a specific owned board item instance. */
+export function assignBoardSector(state: RoundsState, instanceId: string, sector: number): RoundsState {
+  return {
+    ...state,
+    ownedItems: state.ownedItems.map(item =>
+      item.instanceId === instanceId ? { ...item, sector } : item
+    ),
   };
 }
 

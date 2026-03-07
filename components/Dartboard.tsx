@@ -17,10 +17,16 @@ export interface DartMarker {
   color: string;
 }
 
+export interface BoardEffectMarker {
+  sector: number;
+  effectType: string;
+}
+
 interface DartboardProps {
   size: number;
   darts?: DartMarker[];
   aimIndicator?: { x: number; y: number; radius: number } | null;
+  boardEffects?: BoardEffectMarker[];
 }
 
 const COLORS = {
@@ -36,6 +42,25 @@ const COLORS = {
   wire: '#7ab3cc',
   numberColor: '#f5c518',
 };
+
+function makeStarField(size: number, spacing = 20, outerR = 5, innerR = 2) {
+  const path = Skia.Path.Make();
+  for (let row = 0; row * spacing <= size + spacing; row++) {
+    const offsetX = row % 2 === 0 ? 0 : spacing / 2;
+    for (let col = 0; col * spacing <= size + spacing; col++) {
+      const x = col * spacing + offsetX;
+      const y = row * spacing;
+      for (let i = 0; i < 8; i++) {
+        const angle = (i * Math.PI / 4) - Math.PI / 2;
+        const r = i % 2 === 0 ? outerR : innerR;
+        if (i === 0) path.moveTo(x + r * Math.cos(angle), y + r * Math.sin(angle));
+        else path.lineTo(x + r * Math.cos(angle), y + r * Math.sin(angle));
+      }
+      path.close();
+    }
+  }
+  return path;
+}
 
 function makeAnnularSector(
   cx: number,
@@ -69,7 +94,7 @@ function makeAnnularSector(
   return path;
 }
 
-export default function Dartboard({ size, darts = [], aimIndicator }: DartboardProps) {
+export default function Dartboard({ size, darts = [], aimIndicator, boardEffects }: DartboardProps) {
   const cx = size / 2;
   const cy = size / 2;
   // boardR = radius of the scoring area (double ring outer edge)
@@ -132,6 +157,8 @@ export default function Dartboard({ size, darts = [], aimIndicator }: DartboardP
     });
   }, [size]);
 
+  const starFieldPath = useMemo(() => makeStarField(size), [size]);
+
   return (
     <Canvas style={{ width: size, height: size }}>
       {/* Wooden border */}
@@ -155,6 +182,48 @@ export default function Dartboard({ size, darts = [], aimIndicator }: DartboardP
 
       {/* Inner bull (50) */}
       <Circle cx={cx} cy={cy} r={boardR * RING_RADII.bull} color={COLORS.bull} />
+
+      {/* Bonus sector star overlays — inner and outer single only (no triple/double) */}
+      {boardEffects?.map((effect) => {
+        if (effect.effectType !== 'bonus_sector') return null;
+
+        if (effect.sector >= 1 && effect.sector <= 20) {
+          const seg = segments.find(s => s.num === effect.sector);
+          if (!seg) return null;
+          return (
+            <React.Fragment key={`bonus-star-${effect.sector}`}>
+              <Group clip={seg.innerSingle}>
+                <Path path={starFieldPath} color="rgba(245, 197, 24, 0.75)" style="fill" />
+              </Group>
+              <Group clip={seg.outerSingle}>
+                <Path path={starFieldPath} color="rgba(245, 197, 24, 0.75)" style="fill" />
+              </Group>
+            </React.Fragment>
+          );
+        } else if (effect.sector === 25) {
+          const clipPath = Skia.Path.Make();
+          (clipPath as any).addCircle(cx, cy, boardR * RING_RADII.outerBull);
+          return (
+            <Group key={`bonus-star-${effect.sector}`} clip={clipPath}>
+              <Path path={starFieldPath} color="rgba(245, 197, 24, 0.75)" style="fill" />
+            </Group>
+          );
+        } else if (effect.sector === 50) {
+          const clipPath = Skia.Path.Make();
+          (clipPath as any).addCircle(cx, cy, boardR * RING_RADII.bull);
+          return (
+            <Group key={`bonus-star-${effect.sector}`} clip={clipPath}>
+              <Path path={starFieldPath} color="rgba(245, 197, 24, 0.75)" style="fill" />
+            </Group>
+          );
+        }
+        return null;
+      })}
+
+      {/* Re-render inner bull on top when sector 25 has bonus (stars only on ring) */}
+      {boardEffects?.some(e => e.sector === 25 && e.effectType === 'bonus_sector') && (
+        <Circle cx={cx} cy={cy} r={boardR * RING_RADII.bull} color={COLORS.bull} />
+      )}
 
       {/* Segment numbers */}
       {font &&
