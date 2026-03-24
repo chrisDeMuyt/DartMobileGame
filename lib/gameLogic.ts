@@ -51,6 +51,7 @@ export interface RoundsState {
   lastTurnReward: number;
   lastDartBonus: number;
   lastDartMultBonus: number;
+  lastDiamondMult: number;
 }
 
 export type GameState = RoundsState;
@@ -130,12 +131,13 @@ export function initGameState(player: Player): RoundsState {
     turnScore: 0,
     turnOutcome: null,
     mult: 0,
-    currency: 10,
+    currency: 100, // TODO: remove (testing)
     ownedItems: [],
-    shopOffers: { ...generateShopOffers([], 0), item: 'mult_sector' },
+    shopOffers: generateShopOffers([], 0),
     lastTurnReward: 0,
     lastDartBonus: 0,
     lastDartMultBonus: 0,
+    lastDiamondMult: 1,
   };
 }
 
@@ -161,6 +163,17 @@ function computeMult(darts: DartHit[], ownedItems: OwnedItem[]): number {
       mult = (mult + 1 + dartMultBonus) * n;
     } else {
       mult += 1 + dartMultBonus;
+    }
+  }
+  // Second pass: apply diamond_sector multiplicative bonus
+  for (const d of scoring) {
+    for (const item of ownedItems) {
+      const bi = item as OwnedBoardItem;
+      if (bi.sector == null || bi.sector !== d.segment) continue;
+      const def = getItemDef(item.defId);
+      if (def?.category === 'board' && def.effect.type === 'diamond_sector') {
+        mult *= def.effect.multMultiplier;
+      }
     }
   }
   return mult;
@@ -190,6 +203,7 @@ export function addDart(state: RoundsState, dart: DartHit): RoundsState {
 
   // Current dart's mult bonus only (for animation)
   let multBonus = 0;
+  let diamondMult = 1;
   if (dart.score > 0) {
     for (const item of state.ownedItems) {
       const bi = item as OwnedBoardItem;
@@ -197,6 +211,8 @@ export function addDart(state: RoundsState, dart: DartHit): RoundsState {
       const def = getItemDef(item.defId);
       if (def?.category === 'board' && def.effect.type === 'mult_sector') {
         multBonus += def.effect.multBonus;
+      } else if (def?.category === 'board' && def.effect.type === 'diamond_sector') {
+        diamondMult *= def.effect.multMultiplier;
       }
     }
   }
@@ -205,7 +221,7 @@ export function addDart(state: RoundsState, dart: DartHit): RoundsState {
   const newMult  = computeMult(newDarts, state.ownedItems);
   const won      = newScore * newMult >= state.turnTarget;
   if (!won && newDarts.length < 3) {
-    return { ...state, currentTurnDarts: newDarts, turnScore: newScore, mult: newMult, lastDartBonus: bonus, lastDartMultBonus: multBonus };
+    return { ...state, currentTurnDarts: newDarts, turnScore: newScore, mult: newMult, lastDartBonus: bonus, lastDartMultBonus: multBonus, lastDiamondMult: diamondMult };
   }
   const reward = won ? TURN_REWARDS[state.turnIndex] : 0;
   return {
@@ -218,6 +234,7 @@ export function addDart(state: RoundsState, dart: DartHit): RoundsState {
     lastTurnReward: reward,
     lastDartBonus: bonus,
     lastDartMultBonus: multBonus,
+    lastDiamondMult: diamondMult,
   };
 }
 
@@ -234,6 +251,7 @@ export function advanceTurn(state: RoundsState): RoundsState {
     newGlobalTurnIndex,
     isNewRound ? undefined : state.shopOffers.powerup,
   );
+  if (newGlobalTurnIndex === 1) newOffers.item = 'diamond_sector'; // TODO: remove (testing diamond_sector)
 
   return {
     ...state,
@@ -249,6 +267,7 @@ export function advanceTurn(state: RoundsState): RoundsState {
     lastTurnReward:   0,
     lastDartBonus:    0,
     lastDartMultBonus: 0,
+    lastDiamondMult:  1,
   };
 }
 
@@ -324,9 +343,13 @@ export function buyPowerup(state: RoundsState): RoundsState {
 export function assignBoardSector(state: RoundsState, instanceId: string, sector: number): RoundsState {
   return {
     ...state,
-    ownedItems: state.ownedItems.map(item =>
-      item.instanceId === instanceId ? { ...item, sector } : item
-    ),
+    ownedItems: state.ownedItems.map(item => {
+      if (item.instanceId === instanceId) return { ...item, sector };
+      // Evict any other item currently occupying this sector
+      const bi = item as OwnedBoardItem;
+      if (bi.sector === sector) return { ...item, sector: null };
+      return item;
+    }),
   };
 }
 

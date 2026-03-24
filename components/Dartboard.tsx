@@ -63,6 +63,20 @@ function makeStarField(size: number, spacing = 20, outerR = 5, innerR = 2) {
   return path;
 }
 
+function makeDiamondLines(size: number, spacing = 16, direction: 1 | -1) {
+  const path = Skia.Path.Make();
+  for (let i = -size; i <= size * 2; i += spacing) {
+    if (direction === 1) {
+      path.moveTo(i, 0);
+      path.lineTo(i + size, size);
+    } else {
+      path.moveTo(i, size);
+      path.lineTo(i + size, 0);
+    }
+  }
+  return path;
+}
+
 function makePlaidLines(size: number, spacing = 14, direction: 'h' | 'v') {
   const path = Skia.Path.Make();
   if (direction === 'h') {
@@ -177,6 +191,8 @@ export default function Dartboard({ size, darts = [], aimIndicator, boardEffects
   const starFieldPath = useMemo(() => makeStarField(size), [size]);
   const plaidHLines = useMemo(() => makePlaidLines(size, 14, 'h'), [size]);
   const plaidVLines = useMemo(() => makePlaidLines(size, 14, 'v'), [size]);
+  const diamondLines1 = useMemo(() => makeDiamondLines(size, 16, 1), [size]);
+  const diamondLines2 = useMemo(() => makeDiamondLines(size, 16, -1), [size]);
 
   return (
     <Canvas style={{ width: size, height: size }}>
@@ -276,12 +292,52 @@ export default function Dartboard({ size, darts = [], aimIndicator, boardEffects
             );
           }
           return null;
+        } else if (effect.effectType === 'diamond_sector') {
+          if (effect.sector >= 1 && effect.sector <= 20) {
+            const seg = segments.find(s => s.num === effect.sector);
+            if (!seg) return null;
+            return (
+              <React.Fragment key={`diamond-${effect.sector}`}>
+                <Group clip={seg.innerSingle}>
+                  <Rect x={0} y={0} width={size} height={size} color="rgba(0, 200, 220, 0.45)" />
+                  <Path path={diamondLines1} color="rgba(0, 240, 255, 0.5)" style="stroke" strokeWidth={1.5} />
+                  <Path path={diamondLines2} color="rgba(0, 240, 255, 0.5)" style="stroke" strokeWidth={1.5} />
+                </Group>
+                <Group clip={seg.outerSingle}>
+                  <Rect x={0} y={0} width={size} height={size} color="rgba(0, 200, 220, 0.45)" />
+                  <Path path={diamondLines1} color="rgba(0, 240, 255, 0.5)" style="stroke" strokeWidth={1.5} />
+                  <Path path={diamondLines2} color="rgba(0, 240, 255, 0.5)" style="stroke" strokeWidth={1.5} />
+                </Group>
+              </React.Fragment>
+            );
+          } else if (effect.sector === 25) {
+            const clipPath = Skia.Path.Make();
+            (clipPath as any).addCircle(cx, cy, boardR * RING_RADII.outerBull);
+            return (
+              <Group key={`diamond-${effect.sector}`} clip={clipPath}>
+                <Rect x={0} y={0} width={size} height={size} color="rgba(0, 200, 220, 0.45)" />
+                <Path path={diamondLines1} color="rgba(0, 240, 255, 0.5)" style="stroke" strokeWidth={1.5} />
+                <Path path={diamondLines2} color="rgba(0, 240, 255, 0.5)" style="stroke" strokeWidth={1.5} />
+              </Group>
+            );
+          } else if (effect.sector === 50) {
+            const clipPath = Skia.Path.Make();
+            (clipPath as any).addCircle(cx, cy, boardR * RING_RADII.bull);
+            return (
+              <Group key={`diamond-${effect.sector}`} clip={clipPath}>
+                <Rect x={0} y={0} width={size} height={size} color="rgba(0, 200, 220, 0.45)" />
+                <Path path={diamondLines1} color="rgba(0, 240, 255, 0.5)" style="stroke" strokeWidth={1.5} />
+                <Path path={diamondLines2} color="rgba(0, 240, 255, 0.5)" style="stroke" strokeWidth={1.5} />
+              </Group>
+            );
+          }
+          return null;
         }
         return null;
       })}
 
       {/* Re-render inner bull on top when sector 25 has an overlay (effect only on ring) */}
-      {boardEffects?.some(e => e.sector === 25 && (e.effectType === 'bonus_sector' || e.effectType === 'mult_sector')) && (
+      {boardEffects?.some(e => e.sector === 25 && (e.effectType === 'bonus_sector' || e.effectType === 'mult_sector' || e.effectType === 'diamond_sector')) && (
         <Circle cx={cx} cy={cy} r={boardR * RING_RADII.bull} color={COLORS.bull} />
       )}
 

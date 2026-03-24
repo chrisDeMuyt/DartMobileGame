@@ -46,7 +46,7 @@ export default function Scoreboard({ state }: Props) {
         <StatBox label="TARGET" value={String(turnTarget)} valueStyle={styles.goldValue} />
         <AnimatedStatBox label="POINTS" numericValue={turnScore} labelStyle={styles.cyanLabel} valueStyle={styles.cyanValue} deltaColor={COLORS.cyan} onAnimDone={handlePointsDone} bonusDelta={lastDartBonus} />
         <Text style={styles.multSymbol}>×</Text>
-        <AnimatedStatBox label="MULT" numericValue={mult} comboMult={comboMult} labelStyle={styles.redLabel} valueStyle={styles.redValue} deltaColor={COLORS.red} triggerKey={multTrigger} onAnimDone={handleMultDone} multSectorBonus={lastDartMultBonus} />
+        <AnimatedStatBox label="MULT" numericValue={mult} comboMult={comboMult} labelStyle={styles.redLabel} valueStyle={styles.redValue} deltaColor={COLORS.red} triggerKey={multTrigger} onAnimDone={handleMultDone} multSectorBonus={lastDartMultBonus} diamondMult={state.lastDiamondMult} />
         <AnimatedStatBox label="SCORE" numericValue={score} valueStyle={styles.goldValue} deltaColor={COLORS.gold} triggerKey={scoreTrigger} />
       </View>
 
@@ -99,6 +99,7 @@ function AnimatedStatBox({
   onAnimDone,
   bonusDelta,
   multSectorBonus,
+  diamondMult,
 }: {
   label: string;
   numericValue: number;
@@ -112,12 +113,13 @@ function AnimatedStatBox({
   onAnimDone?: (duration: number) => void;
   bonusDelta?: number;
   multSectorBonus?: number;
+  diamondMult?: number;
 }) {
   const prevRef = useRef(numericValue);
   const prevComboRef = useRef(comboMult ?? 1);
   const [popups, setPopups] = useState<Popup[]>([]);
   const [displayedValue, setDisplayedValue] = useState(numericValue);
-  const pendingRef = useRef<{ diff: number; newValue: number; newCombo: number; prevCombo: number; multSectorBonus: number } | null>(null);
+  const pendingRef = useRef<{ diff: number; newValue: number; newCombo: number; prevCombo: number; multSectorBonus: number; diamondMult: number } | null>(null);
 
   const spawn = useCallback((text: string, color: string, delay = 0) => {
     const id = Date.now() + Math.random();
@@ -127,40 +129,51 @@ function AnimatedStatBox({
     }, delay);
   }, []);
 
-  const fireAnim = useCallback((diff: number, newCombo: number, prevCombo: number, newValue: number, bonusDeltaArg = 0, multSectorBonusArg = 0) => {
+  const fireAnim = useCallback((diff: number, newCombo: number, prevCombo: number, newValue: number, bonusDeltaArg = 0, multSectorBonusArg = 0, diamondMultArg = 1) => {
+    // Separate out the diamond multiplier so we can animate it as a distinct step
+    const prevValue = newValue - diff;
+    const baseNewValue = diamondMultArg > 1 ? Math.round(newValue / diamondMultArg) : newValue;
+    const baseDiff = baseNewValue - prevValue;
+
     let duration: number;
     if (newCombo > prevCombo) {
       // Combo: show +1, optionally +multBonus MULT!, then ×N
-      const afterDart = newValue - diff + 1;
+      const afterDart = prevValue + 1;
       setDisplayedValue(afterDart);
       spawn('+1', deltaColor, 0);
       if (multSectorBonusArg > 0) {
         setTimeout(() => setDisplayedValue(afterDart + multSectorBonusArg), 380);
         spawn(`+${multSectorBonusArg} MULT!`, COLORS.red, 380);
-        setTimeout(() => setDisplayedValue(newValue), 760);
+        setTimeout(() => setDisplayedValue(baseNewValue), 760);
         spawn(`×${newCombo}`, COLORS.gold, 760);
         duration = 760 + 900;
       } else {
-        setTimeout(() => setDisplayedValue(newValue), 380);
+        setTimeout(() => setDisplayedValue(baseNewValue), 380);
         spawn(`×${newCombo}`, COLORS.gold, 380);
         duration = 380 + 900;
       }
     } else {
-      const dartDiff = diff - bonusDeltaArg - multSectorBonusArg;
+      const dartDiff = baseDiff - bonusDeltaArg - multSectorBonusArg;
       const totalExtra = bonusDeltaArg + multSectorBonusArg;
-      setDisplayedValue(totalExtra > 0 ? newValue - totalExtra : newValue);
+      setDisplayedValue(totalExtra > 0 ? baseNewValue - totalExtra : baseNewValue);
       spawn(`+${dartDiff}`, deltaColor, 0);
       duration = 900;
       if (bonusDeltaArg > 0) {
-        setTimeout(() => setDisplayedValue(newValue - multSectorBonusArg), duration);
+        setTimeout(() => setDisplayedValue(baseNewValue - multSectorBonusArg), duration);
         spawn(`+${bonusDeltaArg} BONUS!`, COLORS.gold, duration);
         duration += 900;
       }
       if (multSectorBonusArg > 0) {
-        setTimeout(() => setDisplayedValue(newValue), duration);
+        setTimeout(() => setDisplayedValue(baseNewValue), duration);
         spawn(`+${multSectorBonusArg} MULT!`, COLORS.red, duration);
         duration += 900;
       }
+    }
+    // Diamond sector: show multiplicative step last
+    if (diamondMultArg > 1) {
+      setTimeout(() => setDisplayedValue(newValue), duration);
+      spawn(`×${diamondMultArg} DIAMOND!`, COLORS.cyan, duration);
+      duration += 900;
     }
     onAnimDone?.(duration);
   }, [spawn, deltaColor, onAnimDone]);
@@ -185,7 +198,7 @@ function AnimatedStatBox({
       fireAnim(diff, newCombo, prevCombo, numericValue, bonusDelta ?? 0, 0);
     } else {
       // MULT / SCORE: hold until triggerKey fires
-      pendingRef.current = { diff, newValue: numericValue, newCombo, prevCombo, multSectorBonus: multSectorBonus ?? 0 };
+      pendingRef.current = { diff, newValue: numericValue, newCombo, prevCombo, multSectorBonus: multSectorBonus ?? 0, diamondMult: diamondMult ?? 1 };
     }
   }, [numericValue]);
 
@@ -195,7 +208,7 @@ function AnimatedStatBox({
     const p = pendingRef.current;
     if (!p) return;
     pendingRef.current = null;
-    fireAnim(p.diff, p.newCombo, p.prevCombo, p.newValue, 0, p.multSectorBonus);
+    fireAnim(p.diff, p.newCombo, p.prevCombo, p.newValue, 0, p.multSectorBonus, p.diamondMult);
   }, [triggerKey]);
 
   return (
