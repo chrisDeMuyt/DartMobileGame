@@ -28,6 +28,7 @@ interface DartboardProps {
   darts?: DartMarker[];
   aimIndicator?: { x: number; y: number; radius: number } | null;
   boardEffects?: BoardEffectMarker[];
+  deadSectors?: number[];
 }
 
 const COLORS = {
@@ -73,6 +74,23 @@ function makeDiamondLines(size: number, spacing = 16, direction: 1 | -1) {
       path.moveTo(i, size);
       path.lineTo(i + size, 0);
     }
+  }
+  return path;
+}
+
+function makeGlassStreaks(size: number) {
+  const path = Skia.Path.Make();
+  const streaks = [
+    { x0: size * 0.05, angle: 80 },
+    { x0: size * 0.25, angle: 76 },
+    { x0: size * 0.50, angle: 82 },
+    { x0: size * 0.70, angle: 77 },
+    { x0: size * 0.88, angle: 79 },
+  ];
+  for (const { x0, angle } of streaks) {
+    const rad = (angle * Math.PI) / 180;
+    path.moveTo(x0, 0);
+    path.lineTo(x0 + size * Math.cos(rad), size * Math.sin(rad));
   }
   return path;
 }
@@ -125,7 +143,7 @@ function makeAnnularSector(
   return path;
 }
 
-export default function Dartboard({ size, darts = [], aimIndicator, boardEffects }: DartboardProps) {
+export default function Dartboard({ size, darts = [], aimIndicator, boardEffects, deadSectors }: DartboardProps) {
   const cx = size / 2;
   const cy = size / 2;
   // boardR = radius of the scoring area (double ring outer edge)
@@ -193,6 +211,7 @@ export default function Dartboard({ size, darts = [], aimIndicator, boardEffects
   const plaidVLines = useMemo(() => makePlaidLines(size, 14, 'v'), [size]);
   const diamondLines1 = useMemo(() => makeDiamondLines(size, 16, 1), [size]);
   const diamondLines2 = useMemo(() => makeDiamondLines(size, 16, -1), [size]);
+  const glassStreaks  = useMemo(() => makeGlassStreaks(size), [size]);
 
   return (
     <Canvas style={{ width: size, height: size }}>
@@ -203,20 +222,40 @@ export default function Dartboard({ size, darts = [], aimIndicator, boardEffects
       <Circle cx={cx} cy={cy} r={boardR} color={COLORS.singleBlack} />
 
       {/* Segments */}
-      {segments.map(({ num, innerSingle, triple, outerSingle, double, singleColor, tripleColor, doubleColor }) => (
-        <Group key={num}>
-          <Path path={innerSingle} color={singleColor} />
-          <Path path={triple} color={tripleColor} />
-          <Path path={outerSingle} color={singleColor} />
-          <Path path={double} color={doubleColor} />
-        </Group>
-      ))}
+      {segments.map(({ num, innerSingle, triple, outerSingle, double, singleColor, tripleColor, doubleColor }) => {
+        if (deadSectors?.includes(num)) {
+          return (
+            <Group key={num}>
+              <Path path={innerSingle} color={COLORS.border} />
+              <Path path={triple} color={COLORS.border} />
+              <Path path={outerSingle} color={COLORS.border} />
+              <Path path={double} color={COLORS.border} />
+            </Group>
+          );
+        }
+        return (
+          <Group key={num}>
+            <Path path={innerSingle} color={singleColor} />
+            <Path path={triple} color={tripleColor} />
+            <Path path={outerSingle} color={singleColor} />
+            <Path path={double} color={doubleColor} />
+          </Group>
+        );
+      })}
 
       {/* Outer bull (25) */}
       <Circle cx={cx} cy={cy} r={boardR * RING_RADII.outerBull} color={COLORS.outerBull} />
 
       {/* Inner bull (50) */}
       <Circle cx={cx} cy={cy} r={boardR * RING_RADII.bull} color={COLORS.bull} />
+
+      {/* Dead bullseye sectors (shattered glass) — paint over with board background */}
+      {deadSectors?.includes(25) && (
+        <Circle cx={cx} cy={cy} r={boardR * RING_RADII.outerBull} color={COLORS.border} />
+      )}
+      {deadSectors?.includes(50) && (
+        <Circle cx={cx} cy={cy} r={boardR * RING_RADII.bull} color={COLORS.border} />
+      )}
 
       {/* Board effect overlays — inner and outer single only (no triple/double) */}
       {boardEffects?.map((effect) => {
@@ -332,18 +371,63 @@ export default function Dartboard({ size, darts = [], aimIndicator, boardEffects
             );
           }
           return null;
+        } else if (effect.effectType === 'glass_sector') {
+          if (effect.sector >= 1 && effect.sector <= 20) {
+            const seg = segments.find(s => s.num === effect.sector);
+            if (!seg) return null;
+            return (
+              <React.Fragment key={`glass-${effect.sector}`}>
+                <Path path={seg.innerSingle} color={COLORS.border} />
+                <Path path={seg.outerSingle} color={COLORS.border} />
+                <Group clip={seg.innerSingle}>
+                  <Rect x={0} y={0} width={size} height={size} color="rgba(200, 235, 255, 0.22)" />
+                  <Path path={glassStreaks} color="rgba(255, 255, 255, 0.6)" style="stroke" strokeWidth={2.5} />
+                </Group>
+                <Group clip={seg.outerSingle}>
+                  <Rect x={0} y={0} width={size} height={size} color="rgba(200, 235, 255, 0.22)" />
+                  <Path path={glassStreaks} color="rgba(255, 255, 255, 0.6)" style="stroke" strokeWidth={2.5} />
+                </Group>
+              </React.Fragment>
+            );
+          } else if (effect.sector === 25) {
+            const clipPath = Skia.Path.Make();
+            (clipPath as any).addCircle(cx, cy, boardR * RING_RADII.outerBull);
+            return (
+              <React.Fragment key={`glass-${effect.sector}`}>
+                <Circle cx={cx} cy={cy} r={boardR * RING_RADII.outerBull} color={COLORS.border} />
+                <Group clip={clipPath}>
+                  <Rect x={0} y={0} width={size} height={size} color="rgba(200, 235, 255, 0.22)" />
+                  <Path path={glassStreaks} color="rgba(255, 255, 255, 0.6)" style="stroke" strokeWidth={2.5} />
+                </Group>
+              </React.Fragment>
+            );
+          } else if (effect.sector === 50) {
+            const clipPath = Skia.Path.Make();
+            (clipPath as any).addCircle(cx, cy, boardR * RING_RADII.bull);
+            return (
+              <React.Fragment key={`glass-${effect.sector}`}>
+                <Circle cx={cx} cy={cy} r={boardR * RING_RADII.bull} color={COLORS.border} />
+                <Group clip={clipPath}>
+                  <Rect x={0} y={0} width={size} height={size} color="rgba(200, 235, 255, 0.22)" />
+                  <Path path={glassStreaks} color="rgba(255, 255, 255, 0.6)" style="stroke" strokeWidth={2.5} />
+                </Group>
+              </React.Fragment>
+            );
+          }
+          return null;
         }
         return null;
       })}
 
       {/* Re-render inner bull on top when sector 25 has an overlay (effect only on ring) */}
-      {boardEffects?.some(e => e.sector === 25 && (e.effectType === 'bonus_sector' || e.effectType === 'mult_sector' || e.effectType === 'diamond_sector')) && (
+      {boardEffects?.some(e => e.sector === 25 && (['bonus_sector', 'mult_sector', 'diamond_sector', 'glass_sector'] as string[]).includes(e.effectType)) && (
         <Circle cx={cx} cy={cy} r={boardR * RING_RADII.bull} color={COLORS.bull} />
       )}
 
       {/* Segment numbers */}
       {font &&
         segments.map(({ num, nx, ny }) => {
+          if (deadSectors?.includes(num)) return null;
           const text = num.toString();
           const measured = font.measureText(text);
           return (

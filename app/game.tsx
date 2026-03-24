@@ -16,6 +16,7 @@ const Dartboard = lazy(() => import('../components/Dartboard'));
 const FlyingDartOverlay = lazy(() => import('../components/FlyingDartOverlay'));
 const Slingshot = lazy(() => import('../components/Slingshot'));
 const BoardSectorPicker = lazy(() => import('../components/BoardSectorPicker'));
+const ShatterOverlay = lazy(() => import('../components/ShatterOverlay'));
 import Scoreboard from '../components/Scoreboard';
 import ShopModal from '../components/ShopModal';
 import { getDartScore, DartHit } from '../lib/dartboard';
@@ -180,11 +181,25 @@ export default function GameScreen() {
 
   const AIM_SPREAD = bRadius * 0.22 * getAimFactor(state.ownedItems);
 
+  const deadSectors = useMemo(() =>
+    state.ownedItems
+      .filter(item => {
+        const bi = item as OwnedBoardItem;
+        const def = getItemDef(item.defId);
+        return def?.category === 'board' && def.effect.type === 'glass_sector'
+          && bi.shattered && bi.sector != null;
+      })
+      .map(item => (item as OwnedBoardItem).sector as number),
+    [state.ownedItems],
+  );
+
   const boardEffects = useMemo<BoardEffectMarker[]>(() =>
     state.ownedItems
       .filter(item => {
         const def = getItemDef(item.defId);
-        return def?.category === 'board' && (item as OwnedBoardItem).sector !== null;
+        const bi = item as OwnedBoardItem;
+        if (def?.category === 'board' && def.effect.type === 'glass_sector' && bi.shattered) return false;
+        return def?.category === 'board' && bi.sector !== null;
       })
       .map(item => ({
         sector: (item as OwnedBoardItem).sector!,
@@ -308,6 +323,14 @@ export default function GameScreen() {
     setPendingBoardDefId(null);
   };
 
+  const [shatterAnim, setShatterAnim] = useState<{ sector: number } | null>(null);
+  useEffect(() => {
+    if (!state.lastShatterSector) return;
+    setShatterAnim({ sector: state.lastShatterSector });
+    const t = setTimeout(() => setShatterAnim(null), 700);
+    return () => clearTimeout(t);
+  }, [state.lastShatterSector]);
+
   const [overlayReady, setOverlayReady] = useState(false);
   useEffect(() => {
     if (state.turnOutcome !== null && flyingDart === null) {
@@ -343,9 +366,16 @@ export default function GameScreen() {
 
       {/* Dartboard */}
       <View ref={boardViewRef} style={styles.boardContainer} onLayout={onBoardLayout}>
-        <Suspense fallback={<View style={{ width: boardSize, height: boardSize }} />}>
-          <Dartboard size={boardSize} darts={dartMarkers} aimIndicator={aimPreview} boardEffects={boardEffects} />
-        </Suspense>
+        <View style={{ width: boardSize, height: boardSize }}>
+          <Suspense fallback={<View style={{ width: boardSize, height: boardSize }} />}>
+            <Dartboard size={boardSize} darts={dartMarkers} aimIndicator={aimPreview} boardEffects={boardEffects} deadSectors={deadSectors} />
+          </Suspense>
+          {shatterAnim && (
+            <Suspense fallback={null}>
+              <ShatterOverlay size={boardSize} sector={shatterAnim.sector} />
+            </Suspense>
+          )}
+        </View>
       </View>
 
       {/* Slingshot throw zone */}

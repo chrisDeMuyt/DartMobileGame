@@ -52,6 +52,8 @@ export interface RoundsState {
   lastDartBonus: number;
   lastDartMultBonus: number;
   lastDiamondMult: number;
+  lastGlassMult: number;
+  lastShatterSector: number | null;
 }
 
 export type GameState = RoundsState;
@@ -138,6 +140,8 @@ export function initGameState(player: Player): RoundsState {
     lastDartBonus: 0,
     lastDartMultBonus: 0,
     lastDiamondMult: 1,
+    lastGlassMult: 1,
+    lastShatterSector: null,
   };
 }
 
@@ -165,27 +169,62 @@ function computeMult(darts: DartHit[], ownedItems: OwnedItem[]): number {
       mult += 1 + dartMultBonus;
     }
   }
-  // Second pass: apply diamond_sector multiplicative bonus
-  for (const d of scoring) {
-    for (const item of ownedItems) {
-      const bi = item as OwnedBoardItem;
-      if (bi.sector == null || bi.sector !== d.segment) continue;
-      const def = getItemDef(item.defId);
-      if (def?.category === 'board' && def.effect.type === 'diamond_sector') {
-        mult *= def.effect.multMultiplier;
-      }
+  return mult;
+}
+
+/**
+ * Incrementally applies the current dart's additive mult contribution
+ * (including combo logic and mult_sector bonuses) on top of the existing mult.
+ * Multiplicative bonuses (diamond/glass) are NOT applied here — they are
+ * one-shot events handled directly in addDart.
+ */
+function applyDartAdditive(
+  currentMult: number,
+  dart: DartHit,
+  prevDarts: DartHit[],
+  ownedItems: OwnedItem[],
+): number {
+  if (dart.score === 0) return currentMult;
+
+  const prevHits = prevDarts.filter(d => d.score > 0 && d.segment === dart.segment).length;
+  const n = prevHits + 1;
+
+  let multBonus = 0;
+  for (const item of ownedItems) {
+    const bi = item as OwnedBoardItem;
+    if (bi.sector == null || bi.sector !== dart.segment) continue;
+    const def = getItemDef(item.defId);
+    if (def?.category === 'board' && def.effect.type === 'mult_sector') {
+      multBonus += def.effect.multBonus;
     }
   }
-  return mult;
+
+  if (n >= 2) {
+    return (currentMult + 1 + multBonus) * n;
+  }
+  return currentMult + 1 + multBonus;
 }
 
 // ---- Turn actions ----
 
 const TURN_REWARDS = [5, 10, 15];
 
-export function addDart(state: RoundsState, dart: DartHit): RoundsState {
+export function addDart(state: RoundsState, dartArg: DartHit): RoundsState {
   if (state.turnOutcome !== null) return state;
   if (state.currentTurnDarts.length >= 3) return state;
+
+  // Shattered glass sector = dead zone: treat as a complete miss
+  const shatteredSectors = new Set(
+    state.ownedItems
+      .filter(item => {
+        const bi = item as OwnedBoardItem;
+        const def = getItemDef(item.defId);
+        return def?.category === 'board' && def.effect.type === 'glass_sector' && bi.shattered && bi.sector != null;
+      })
+      .map(item => (item as OwnedBoardItem).sector as number)
+  );
+  const dart = shatteredSectors.has(dartArg.segment) ? { ...dartArg, score: 0, label: 'MISS' } : dartArg;
+
   const newDarts = [...state.currentTurnDarts, dart];
 
   // Check board item effects
@@ -204,6 +243,7 @@ export function addDart(state: RoundsState, dart: DartHit): RoundsState {
   // Current dart's mult bonus only (for animation)
   let multBonus = 0;
   let diamondMult = 1;
+  let glassMult = 1;
   if (dart.score > 0) {
     for (const item of state.ownedItems) {
       const bi = item as OwnedBoardItem;
@@ -213,15 +253,38 @@ export function addDart(state: RoundsState, dart: DartHit): RoundsState {
         multBonus += def.effect.multBonus;
       } else if (def?.category === 'board' && def.effect.type === 'diamond_sector') {
         diamondMult *= def.effect.multMultiplier;
+      } else if (def?.category === 'board' && def.effect.type === 'glass_sector' && !bi.shattered) {
+        glassMult *= def.effect.multMultiplier;
+      }
+    }
+  }
+
+  // Shatter check: 25% chance when a live glass sector was hit
+  let shatterSector: number | null = null;
+  let newOwnedItems = state.ownedItems;
+  if (glassMult > 1) {
+    for (const item of state.ownedItems) {
+      const bi = item as OwnedBoardItem;
+      if (bi.sector !== dart.segment) continue;
+      const def = getItemDef(item.defId);
+      if (def?.category === 'board' && def.effect.type === 'glass_sector' && !bi.shattered) {
+        if (Math.random() < def.effect.shatterChance) {
+          shatterSector = dart.segment;
+          newOwnedItems = state.ownedItems.map(i =>
+            i.instanceId === item.instanceId ? { ...i, shattered: true } as OwnedBoardItem : i
+          );
+        }
+        break;
       }
     }
   }
 
   const newScore = state.turnScore + dart.score + bonus;
-  const newMult  = computeMult(newDarts, state.ownedItems);
+  const additiveMult = applyDartAdditive(state.mult, dart, state.currentTurnDarts, state.ownedItems);
+  const newMult = additiveMult * diamondMult * glassMult;
   const won      = newScore * newMult >= state.turnTarget;
   if (!won && newDarts.length < 3) {
-    return { ...state, currentTurnDarts: newDarts, turnScore: newScore, mult: newMult, lastDartBonus: bonus, lastDartMultBonus: multBonus, lastDiamondMult: diamondMult };
+    return { ...state, currentTurnDarts: newDarts, turnScore: newScore, mult: newMult, ownedItems: newOwnedItems, lastDartBonus: bonus, lastDartMultBonus: multBonus, lastDiamondMult: diamondMult, lastGlassMult: glassMult, lastShatterSector: shatterSector };
   }
   const reward = won ? TURN_REWARDS[state.turnIndex] : 0;
   return {
@@ -229,12 +292,15 @@ export function addDart(state: RoundsState, dart: DartHit): RoundsState {
     currentTurnDarts: newDarts,
     turnScore: newScore,
     mult: newMult,
+    ownedItems: newOwnedItems,
     turnOutcome: won ? 'won' : 'lost',
     currency: state.currency + reward,
     lastTurnReward: reward,
     lastDartBonus: bonus,
     lastDartMultBonus: multBonus,
     lastDiamondMult: diamondMult,
+    lastGlassMult: glassMult,
+    lastShatterSector: shatterSector,
   };
 }
 
@@ -251,7 +317,7 @@ export function advanceTurn(state: RoundsState): RoundsState {
     newGlobalTurnIndex,
     isNewRound ? undefined : state.shopOffers.powerup,
   );
-  if (newGlobalTurnIndex === 1) newOffers.item = 'diamond_sector'; // TODO: remove (testing diamond_sector)
+  if (newGlobalTurnIndex === 1) newOffers.item = 'glass_sector'; // TODO: remove (testing diamond_sector)
 
   return {
     ...state,
@@ -268,6 +334,8 @@ export function advanceTurn(state: RoundsState): RoundsState {
     lastDartBonus:    0,
     lastDartMultBonus: 0,
     lastDiamondMult:  1,
+    lastGlassMult:    1,
+    lastShatterSector: null,
   };
 }
 
@@ -344,7 +412,12 @@ export function assignBoardSector(state: RoundsState, instanceId: string, sector
   return {
     ...state,
     ownedItems: state.ownedItems.map(item => {
-      if (item.instanceId === instanceId) return { ...item, sector };
+      if (item.instanceId === instanceId) {
+        const bi = item as OwnedBoardItem;
+        const def = getItemDef(item.defId);
+        if (def?.category === 'board' && def.effect.type === 'glass_sector' && bi.shattered) return item;
+        return { ...item, sector };
+      }
       // Evict any other item currently occupying this sector
       const bi = item as OwnedBoardItem;
       if (bi.sector === sector) return { ...item, sector: null };

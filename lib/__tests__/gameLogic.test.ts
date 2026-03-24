@@ -280,6 +280,153 @@ describe('addDart — board items', () => {
   });
 });
 
+// ---- glass_sector ----
+
+describe('glass_sector', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  // ---- basic hit ----
+
+  test('hit matching sector (no shatter): mult=4, lastGlassMult=4, lastShatterSector=null', () => {
+    jest.spyOn(Math, 'random').mockReturnValue(0.5); // above shatterChance=0.25 → no shatter
+    const item = boardItem('glass_sector', 20);
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    const next = addDart(state, hit(20, 20));
+    expect(next.mult).toBe(4);
+    expect(next.lastGlassMult).toBe(4);
+    expect(next.lastShatterSector).toBeNull();
+  });
+
+  test('hit wrong sector: no glass effect, mult=1, lastGlassMult=1', () => {
+    const item = boardItem('glass_sector', 19);
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    const next = addDart(state, hit(20, 20));
+    expect(next.mult).toBe(1);
+    expect(next.lastGlassMult).toBe(1);
+  });
+
+  test('miss: no glass effect, mult=0, lastGlassMult=1', () => {
+    const item = boardItem('glass_sector', 20);
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    const next = addDart(state, miss());
+    expect(next.mult).toBe(0);
+    expect(next.lastGlassMult).toBe(1);
+  });
+
+  // ---- shatter mechanics ----
+
+  test('shatter occurs (random=0): lastShatterSector=20, item shattered=true', () => {
+    jest.spyOn(Math, 'random').mockReturnValue(0); // below 0.25 → shatter
+    const item = boardItem('glass_sector', 20);
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    const next = addDart(state, hit(20, 20));
+    expect(next.lastShatterSector).toBe(20);
+    const owned = next.ownedItems.find(i => i.instanceId === item.instanceId) as OwnedBoardItem;
+    expect(owned.shattered).toBe(true);
+  });
+
+  test('breaking dart still scores ×4 even when shatter occurs', () => {
+    jest.spyOn(Math, 'random').mockReturnValue(0); // shatter
+    const item = boardItem('glass_sector', 20);
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    const next = addDart(state, hit(20, 20));
+    expect(next.mult).toBe(4);
+    expect(next.lastGlassMult).toBe(4);
+  });
+
+  test('no shatter (random=0.5): lastShatterSector=null, item shattered=false', () => {
+    jest.spyOn(Math, 'random').mockReturnValue(0.5);
+    const item = boardItem('glass_sector', 20);
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    const next = addDart(state, hit(20, 20));
+    expect(next.lastShatterSector).toBeNull();
+    const owned = next.ownedItems.find(i => i.instanceId === item.instanceId) as OwnedBoardItem;
+    expect(owned.shattered).toBe(false);
+  });
+
+  // ---- dead zone (shattered) ----
+
+  test('dead zone: hitting shattered sector adds no score', () => {
+    const item = { ...boardItem('glass_sector', 20), shattered: true } as OwnedBoardItem;
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    const next = addDart(state, hit(20, 20));
+    expect(next.turnScore).toBe(0);
+  });
+
+  test('dead zone: hitting shattered sector does not increase mult', () => {
+    const item = { ...boardItem('glass_sector', 20), shattered: true } as OwnedBoardItem;
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    const next = addDart(state, hit(20, 20));
+    expect(next.mult).toBe(0);
+    expect(next.lastGlassMult).toBe(1);
+  });
+
+  test('dead zone: lastShatterSector stays null (already shattered, cannot re-shatter)', () => {
+    const item = { ...boardItem('glass_sector', 20), shattered: true } as OwnedBoardItem;
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    const next = addDart(state, hit(20, 20));
+    expect(next.lastShatterSector).toBeNull();
+  });
+
+  // ---- state resets on advanceTurn ----
+
+  test('lastGlassMult resets to 1 after advanceTurn', () => {
+    jest.spyOn(Math, 'random').mockReturnValue(0.5);
+    const item = boardItem('glass_sector', 20);
+    // Win the turn by hitting the glass sector
+    const state = baseState({ turnTarget: 4, ownedItems: [item] });
+    const afterDart = addDart(state, hit(20, 20)); // score=20, mult=4 → 80 ≥ 4 → won
+    expect(afterDart.turnOutcome).toBe('won');
+    expect(advanceTurn(afterDart).lastGlassMult).toBe(1);
+  });
+
+  test('lastShatterSector resets to null after advanceTurn', () => {
+    jest.spyOn(Math, 'random').mockReturnValue(0); // shatter
+    const item = boardItem('glass_sector', 20);
+    const state = baseState({ turnTarget: 4, ownedItems: [item] });
+    const afterDart = addDart(state, hit(20, 20));
+    expect(afterDart.turnOutcome).toBe('won');
+    expect(advanceTurn(afterDart).lastShatterSector).toBeNull();
+  });
+
+  test('shattered flag persists on item across advanceTurn', () => {
+    jest.spyOn(Math, 'random').mockReturnValue(0); // shatter
+    const item = boardItem('glass_sector', 20);
+    const state = baseState({ turnTarget: 4, ownedItems: [item] });
+    const afterDart = addDart(state, hit(20, 20));
+    const nextTurn = advanceTurn(afterDart);
+    const owned = nextTurn.ownedItems.find(i => i.instanceId === item.instanceId) as OwnedBoardItem;
+    expect(owned.shattered).toBe(true);
+  });
+
+  // ---- mult chain (regression: applyDartAdditive fix) ----
+
+  test('dart after glass hit adds +1, not +4 (no ×4 bleed)', () => {
+    jest.spyOn(Math, 'random').mockReturnValue(0.5); // no shatter
+    const item = boardItem('glass_sector', 20);
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    // dart1: hits glass sector → mult = 1 * 4 = 4
+    const s1 = addDart(state, hit(20, 20));
+    expect(s1.mult).toBe(4);
+    // dart2: hits a different sector → additive +1 only → mult = 5
+    const s2 = addDart(s1, hit(5, 5));
+    expect(s2.mult).toBe(5);
+  });
+
+  test('dart after glass shatters still sees mult=5 (shatter does not reset mult)', () => {
+    jest.spyOn(Math, 'random').mockReturnValue(0); // shatter on dart1
+    const item = boardItem('glass_sector', 20);
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    // dart1: hits glass, shatters → mult = 4 stored in state
+    const s1 = addDart(state, hit(20, 20));
+    expect(s1.mult).toBe(4);
+    expect(s1.lastShatterSector).toBe(20);
+    // dart2: hits different sector, glass now shattered → additive +1 → mult = 5
+    const s2 = addDart(s1, hit(5, 5));
+    expect(s2.mult).toBe(5);
+  });
+});
+
 // ---- advanceTurn ----
 
 describe('advanceTurn', () => {
