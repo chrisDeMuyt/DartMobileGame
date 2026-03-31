@@ -25,26 +25,32 @@ import {
   Player,
   initGameState,
   addDart,
+  addMultiDart,
   advanceTurn,
   buyItem,
   claimPackItem,
   buyPowerup,
   assignBoardSector,
+  assignDartSlot,
   getAimFactor,
+  getMultiDartAimFactor,
 } from '../lib/gameLogic';
 import { getItemDef } from '../lib/items';
-import type { OwnedBoardItem } from '../lib/items';
+import type { OwnedBoardItem, OwnedDartItem } from '../lib/items';
+import DartSlotPicker from '../components/DartSlotPicker';
 import { PIXEL_FONT, pixelShadow, pixelShadowSm, COLORS } from '../lib/theme';
 
 // ---- Reducer ----
 
 type Action =
   | { type: 'THROW'; dart: DartHit }
+  | { type: 'MULTI_THROW'; darts: [DartHit, DartHit] }
   | { type: 'ADVANCE_TURN' }
   | { type: 'BUY_ITEM'; defId: string }
   | { type: 'CLAIM_PACK'; packType: 'decoration' | 'item'; chosenDefId: string }
   | { type: 'BUY_POWERUP' }
   | { type: 'ASSIGN_BOARD_SECTOR'; instanceId: string; sector: number }
+  | { type: 'ASSIGN_DART_SLOT'; instanceId: string; dartIndex: number }
   | { type: 'RESTART' };
 
 function gameReducer(state: RoundsState, action: Action): RoundsState {
@@ -60,8 +66,13 @@ function gameReducer(state: RoundsState, action: Action): RoundsState {
       return claimPackItem(state, action.packType, action.chosenDefId);
     case 'BUY_POWERUP':
       return buyPowerup(state);
+    case 'MULTI_THROW':
+      if (state.turnOutcome !== null) return state;
+      return addMultiDart(state, action.darts[0], action.darts[1]);
     case 'ASSIGN_BOARD_SECTOR':
       return assignBoardSector(state, action.instanceId, action.sector);
+    case 'ASSIGN_DART_SLOT':
+      return assignDartSlot(state, action.instanceId, action.dartIndex);
     case 'RESTART':
       return initGameState(state.player);
     default:
@@ -71,9 +82,64 @@ function gameReducer(state: RoundsState, action: Action): RoundsState {
 
 // ---- Helpers ----
 
-function getDartColor(dartIndex: number): string {
-  return ['#f5c518', '#e0b010', '#c89c00'][dartIndex % 3];
+function getDartColor(throwIndex: number): string {
+  return ['#f5c518', '#e0b010', '#c89c00'][throwIndex % 3];
 }
+
+// ---- Throw slot indicator ----
+
+const SLOT_BOX = 14;
+const SLOT_DIAG = Math.ceil(Math.sqrt(2) * SLOT_BOX * 1.1); // wide enough to span corner-to-corner
+
+function ThrowSlot({ used, isMulti }: { used: boolean; isMulti: boolean }) {
+  const boxes = isMulti ? 2 : 1;
+  return (
+    <View style={slotStyles.column}>
+      {Array.from({ length: boxes }).map((_, i) => (
+        <View key={i} style={[slotStyles.box, used && slotStyles.boxUsed]}>
+          {used && (
+            <>
+              <View style={slotStyles.xLine1} />
+              <View style={slotStyles.xLine2} />
+            </>
+          )}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+const slotStyles = StyleSheet.create({
+  column: {
+    alignItems: 'center',
+    gap: 2,
+  },
+  box: {
+    width: SLOT_BOX,
+    height: SLOT_BOX,
+    backgroundColor: COLORS.gold,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  boxUsed: {
+    backgroundColor: COLORS.bgCard,
+  },
+  xLine1: {
+    position: 'absolute',
+    width: SLOT_DIAG,
+    height: 2,
+    backgroundColor: '#000000',
+    transform: [{ rotate: '45deg' }],
+  },
+  xLine2: {
+    position: 'absolute',
+    width: SLOT_DIAG,
+    height: 2,
+    backgroundColor: '#000000',
+    transform: [{ rotate: '-45deg' }],
+  },
+});
 
 // ---- TurnWonOverlay ----
 
@@ -166,6 +232,7 @@ export default function GameScreen() {
   const [aimPreview, setAimPreview] = useState<{ x: number; y: number; radius: number } | null>(null);
   const [showShop, setShowShop] = useState(false);
   const [pendingBoardDefId, setPendingBoardDefId] = useState<string | null>(null);
+  const [pendingDartDefId, setPendingDartDefId] = useState<string | null>(null);
 
   const boardSize = Math.min(width, height * 0.46);
   const bRadius = boardSize * 0.38; // mirrors boardRadius() in Dartboard.tsx
@@ -179,7 +246,8 @@ export default function GameScreen() {
     color: getDartColor(i),
   }));
 
-  const AIM_SPREAD = bRadius * 0.22 * getAimFactor(state.ownedItems);
+  const multiDartFactor = getMultiDartAimFactor(state.throwsUsed, state.ownedItems);
+  const AIM_SPREAD = bRadius * 0.22 * getAimFactor(state.ownedItems) * multiDartFactor;
 
   const deadSectors = useMemo(() =>
     state.ownedItems
@@ -213,8 +281,14 @@ export default function GameScreen() {
   const boardScreenYRef = useRef(0);
   const pendingDartRef = useRef<DartHit | null>(null);
   const lastDartScoreRef = useRef(0);
-  const throwContextRef = useRef({ dartCount: state.currentTurnDarts.length });
-  throwContextRef.current = { dartCount: state.currentTurnDarts.length };
+  const throwContextRef = useRef({ dartCount: state.throwsUsed });
+  throwContextRef.current = { dartCount: state.throwsUsed };
+
+  type MultiDartPhase =
+    | { phase: 'dart1_flying'; dart2: DartHit; dart2ScreenTo: { x: number; y: number } }
+    | { phase: 'dart2_flying'; dart1: DartHit };
+  const multiDartStateRef = useRef<MultiDartPhase | null>(null);
+  const throwFromRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const [flyingDart, setFlyingDart] = useState<{
     from: { x: number; y: number };
@@ -231,6 +305,41 @@ export default function GameScreen() {
   }, [insets.top]);
 
   const onDartLanded = useCallback(() => {
+    const multiState = multiDartStateRef.current;
+
+    // Multi-dart: first dart just landed — queue second dart flight
+    if (multiState?.phase === 'dart1_flying') {
+      const dart1 = pendingDartRef.current!;
+      pendingDartRef.current = multiState.dart2;
+      multiDartStateRef.current = { phase: 'dart2_flying', dart1 };
+      Vibration.vibrate(30);
+      setFlyingDart({
+        from: throwFromRef.current,
+        to: multiState.dart2ScreenTo,
+        flightColor: getDartColor(throwContextRef.current.dartCount),
+      });
+      return;
+    }
+
+    // Multi-dart: second dart just landed — dispatch both together
+    if (multiState?.phase === 'dart2_flying') {
+      const dart1 = multiState.dart1;
+      const dart2 = pendingDartRef.current!;
+      multiDartStateRef.current = null;
+      pendingDartRef.current = null;
+      Vibration.vibrate(30);
+      lastDartScoreRef.current = dart1.score + dart2.score;
+      dispatch({ type: 'MULTI_THROW', darts: [dart1, dart2] });
+      setFlyingDart(null);
+      if (dart1.score > 0 || dart2.score > 0) {
+        setThrowLocked(true);
+        if (throwLockTimer.current) clearTimeout(throwLockTimer.current);
+        throwLockTimer.current = setTimeout(() => setThrowLocked(false), 3100);
+      }
+      return;
+    }
+
+    // Normal single dart
     const dart = pendingDartRef.current;
     if (!dart) return;
     pendingDartRef.current = null;
@@ -251,6 +360,47 @@ export default function GameScreen() {
       const aimX = boardCX - normX * bRadius * 1.15;
       const aimY = boardCY + bRadius * (1.1 - 2.2 * normY);
 
+      const boardLeft = (width - boardSize) / 2;
+      const contentHeight = height - insets.top - insets.bottom;
+      const fromX = width / 2;
+      const fromY = contentHeight - slingshotHeight + 44 + (slingshotHeight - 44) * 0.52;
+      throwFromRef.current = { x: fromX, y: fromY };
+
+      const { dartCount } = throwContextRef.current;
+      const isMulti = getMultiDartAimFactor(dartCount, state.ownedItems) > 1;
+
+      setAimPreview(null);
+
+      if (isMulti) {
+        // Calculate two independent landing positions within the (doubled) aim circle
+        const angle1 = Math.random() * 2 * Math.PI;
+        const r1 = Math.pow(Math.random(), 1.8) * AIM_SPREAD;
+        const finalX1 = aimX + r1 * Math.cos(angle1);
+        const finalY1 = aimY + r1 * Math.sin(angle1);
+        const dart1: DartHit = { x: finalX1, y: finalY1, ...getDartScore(finalX1 - boardCX, finalY1 - boardCY, bRadius) };
+
+        const angle2 = Math.random() * 2 * Math.PI;
+        const r2 = Math.pow(Math.random(), 1.8) * AIM_SPREAD;
+        const finalX2 = aimX + r2 * Math.cos(angle2);
+        const finalY2 = aimY + r2 * Math.sin(angle2);
+        const dart2: DartHit = { x: finalX2, y: finalY2, ...getDartScore(finalX2 - boardCX, finalY2 - boardCY, bRadius) };
+
+        pendingDartRef.current = dart1;
+        multiDartStateRef.current = {
+          phase: 'dart1_flying',
+          dart2,
+          dart2ScreenTo: { x: boardLeft + dart2.x, y: boardScreenYRef.current + dart2.y },
+        };
+
+        setFlyingDart({
+          from: { x: fromX, y: fromY },
+          to: { x: boardLeft + dart1.x, y: boardScreenYRef.current + dart1.y },
+          flightColor: getDartColor(dartCount),
+        });
+        return;
+      }
+
+      // Normal single dart
       const angle = Math.random() * 2 * Math.PI;
       const r = Math.pow(Math.random(), 1.8) * AIM_SPREAD;
       const finalX = aimX + r * Math.cos(angle);
@@ -260,24 +410,13 @@ export default function GameScreen() {
       const dart: DartHit = { x: finalX, y: finalY, ...scoreData };
       pendingDartRef.current = dart;
 
-      const boardLeft = (width - boardSize) / 2;
-      const toX = boardLeft + finalX;
-      const toY = boardScreenYRef.current + finalY;
-
-      const contentHeight = height - insets.top - insets.bottom;
-      const fromX = width / 2;
-      const fromY = contentHeight - slingshotHeight + 44 + (slingshotHeight - 44) * 0.52;
-
-      const { dartCount } = throwContextRef.current;
-
-      setAimPreview(null);
       setFlyingDart({
         from: { x: fromX, y: fromY },
-        to: { x: toX, y: toY },
+        to: { x: boardLeft + finalX, y: boardScreenYRef.current + finalY },
         flightColor: getDartColor(dartCount),
       });
     },
-    [boardCX, boardCY, bRadius, width, height, boardSize, slingshotHeight, insets, AIM_SPREAD]
+    [boardCX, boardCY, bRadius, width, height, boardSize, slingshotHeight, insets, AIM_SPREAD, state.ownedItems]
   );
 
   const handleAimUpdate = useCallback(
@@ -306,14 +445,29 @@ export default function GameScreen() {
     return null;
   };
 
+  // Find the instanceId of the most-recently-bought unassigned dart item for a given defId
+  const getPendingDartInstanceId = (defId: string): string | null => {
+    for (let i = state.ownedItems.length - 1; i >= 0; i--) {
+      const item = state.ownedItems[i];
+      if (item.defId === defId && (item as OwnedDartItem).dartIndex === null) {
+        return item.instanceId;
+      }
+    }
+    return null;
+  };
+
   const handleBuyItem = (defId: string) => {
     dispatch({ type: 'BUY_ITEM', defId });
-    if (getItemDef(defId)?.category === 'board') setPendingBoardDefId(defId);
+    const cat = getItemDef(defId)?.category;
+    if (cat === 'board') setPendingBoardDefId(defId);
+    else if (cat === 'dart') setPendingDartDefId(defId);
   };
 
   const handleClaimPack = (packType: 'decoration' | 'item', chosenDefId: string) => {
     dispatch({ type: 'CLAIM_PACK', packType, chosenDefId });
-    if (getItemDef(chosenDefId)?.category === 'board') setPendingBoardDefId(chosenDefId);
+    const cat = getItemDef(chosenDefId)?.category;
+    if (cat === 'board') setPendingBoardDefId(chosenDefId);
+    else if (cat === 'dart') setPendingDartDefId(chosenDefId);
   };
 
   const handleSectorConfirm = (sector: number) => {
@@ -321,6 +475,13 @@ export default function GameScreen() {
     const instanceId = getPendingBoardInstanceId(pendingBoardDefId);
     if (instanceId) dispatch({ type: 'ASSIGN_BOARD_SECTOR', instanceId, sector });
     setPendingBoardDefId(null);
+  };
+
+  const handleDartSlotConfirm = (dartIndex: number) => {
+    if (!pendingDartDefId) return;
+    const instanceId = getPendingDartInstanceId(pendingDartDefId);
+    if (instanceId) dispatch({ type: 'ASSIGN_DART_SLOT', instanceId, dartIndex });
+    setPendingDartDefId(null);
   };
 
   const [shatterAnim, setShatterAnim] = useState<{ sector: number } | null>(null);
@@ -383,17 +544,16 @@ export default function GameScreen() {
         <View style={styles.throwInfo}>
           <Text style={styles.playerTurnText}>{state.player.name}</Text>
           <View style={styles.dartDotsRow}>
-            {[0, 1, 2].map(i => (
-              <View
-                key={i}
-                style={[
-                  styles.dartDot,
-                  i < state.currentTurnDarts.length ? styles.dartDotUsed : styles.dartDotFull,
-                ]}
-              />
-            ))}
+            {[0, 1, 2].map(i => {
+              const isMulti = state.ownedItems.some(
+                item => item.defId === 'multi_dart' && (item as OwnedDartItem).dartIndex === i
+              );
+              return (
+                <ThrowSlot key={i} used={i < state.throwsUsed} isMulti={isMulti} />
+              );
+            })}
             <Text style={styles.dartsLeftText}>
-              {3 - state.currentTurnDarts.length} dart{3 - state.currentTurnDarts.length !== 1 ? 's' : ''}
+              {3 - state.throwsUsed} dart{3 - state.throwsUsed !== 1 ? 's' : ''}
             </Text>
           </View>
         </View>
@@ -413,6 +573,7 @@ export default function GameScreen() {
       {flyingDart && (
         <Suspense fallback={null}>
           <FlyingDartOverlay
+            key={`${flyingDart.to.x.toFixed(1)}-${flyingDart.to.y.toFixed(1)}`}
             from={flyingDart.from}
             to={flyingDart.to}
             flightColor={flyingDart.flightColor}
@@ -460,6 +621,21 @@ export default function GameScreen() {
               onSkip={() => setPendingBoardDefId(null)}
             />
           </Suspense>
+        );
+      })()}
+
+      {/* Dart slot picker — shown after buying a dart-category item */}
+      {pendingDartDefId && (() => {
+        const def = getItemDef(pendingDartDefId);
+        if (!def) return null;
+        return (
+          <DartSlotPicker
+            itemName={def.name}
+            itemDescription={def.description}
+            ownedItems={state.ownedItems}
+            onConfirm={handleDartSlotConfirm}
+            onSkip={() => setPendingDartDefId(null)}
+          />
         );
       })()}
 

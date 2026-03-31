@@ -253,7 +253,7 @@ function DartChips({ darts }: { darts: DartHit[] }) {
           <Text style={styles.dartChipLabel}>{d.label}</Text>
         </View>
       ))}
-      {[...Array(3 - darts.length)].map((_, i) => (
+      {[...Array(Math.max(0, 3 - darts.length))].map((_, i) => (
         <View key={`empty-${i}`} style={styles.dartChipEmpty} />
       ))}
     </View>

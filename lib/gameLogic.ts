@@ -2,6 +2,7 @@ import { DartHit } from './dartboard';
 import {
   OwnedItem,
   OwnedBoardItem,
+  OwnedDartItem,
   ItemCategory,
   ITEMS,
   canPurchase,
@@ -42,6 +43,8 @@ export interface RoundsState {
   globalTurnIndex: number;
   turnTarget: number;
   currentTurnDarts: DartHit[];
+  /** Number of throw actions used this turn (1 multi-dart throw = 1, even though it adds 2 darts). */
+  throwsUsed: number;
   turnScore: number;
   turnOutcome: TurnOutcome;
   mult: number;
@@ -130,6 +133,7 @@ export function initGameState(player: Player): RoundsState {
     globalTurnIndex: 0,
     turnTarget: computeTarget(0),
     currentTurnDarts: [],
+    throwsUsed: 0,
     turnScore: 0,
     turnOutcome: null,
     mult: 0,
@@ -209,10 +213,12 @@ function applyDartAdditive(
 
 const TURN_REWARDS = [5, 10, 15];
 
-export function addDart(state: RoundsState, dartArg: DartHit): RoundsState {
-  if (state.turnOutcome !== null) return state;
-  if (state.currentTurnDarts.length >= 3) return state;
-
+/**
+ * Applies a single dart's scoring to state (board effects, mult, score).
+ * Does NOT check turn limits, increment throwsUsed, or check win condition.
+ * Safe to call multiple times in sequence (e.g., for multi-dart).
+ */
+function scoreSingleDart(state: RoundsState, dartArg: DartHit): RoundsState {
   // Shattered glass sector = dead zone: treat as a complete miss
   const shatteredSectors = new Set(
     state.ownedItems
@@ -282,25 +288,57 @@ export function addDart(state: RoundsState, dartArg: DartHit): RoundsState {
   const newScore = state.turnScore + dart.score + bonus;
   const additiveMult = applyDartAdditive(state.mult, dart, state.currentTurnDarts, state.ownedItems);
   const newMult = additiveMult * diamondMult * glassMult;
-  const won      = newScore * newMult >= state.turnTarget;
-  if (!won && newDarts.length < 3) {
-    return { ...state, currentTurnDarts: newDarts, turnScore: newScore, mult: newMult, ownedItems: newOwnedItems, lastDartBonus: bonus, lastDartMultBonus: multBonus, lastDiamondMult: diamondMult, lastGlassMult: glassMult, lastShatterSector: shatterSector };
-  }
-  const reward = won ? TURN_REWARDS[state.turnIndex] : 0;
+
   return {
     ...state,
     currentTurnDarts: newDarts,
     turnScore: newScore,
     mult: newMult,
     ownedItems: newOwnedItems,
-    turnOutcome: won ? 'won' : 'lost',
-    currency: state.currency + reward,
-    lastTurnReward: reward,
     lastDartBonus: bonus,
     lastDartMultBonus: multBonus,
     lastDiamondMult: diamondMult,
     lastGlassMult: glassMult,
     lastShatterSector: shatterSector,
+  };
+}
+
+export function addDart(state: RoundsState, dartArg: DartHit): RoundsState {
+  if (state.turnOutcome !== null) return state;
+  if (state.throwsUsed >= 3) return state;
+
+  const next = { ...scoreSingleDart(state, dartArg), throwsUsed: state.throwsUsed + 1 };
+
+  const won = next.turnScore * next.mult >= next.turnTarget;
+  if (!won && next.throwsUsed < 3) return next;
+
+  const reward = won ? TURN_REWARDS[state.turnIndex] : 0;
+  return {
+    ...next,
+    turnOutcome: won ? 'won' : 'lost',
+    currency: next.currency + reward,
+    lastTurnReward: reward,
+  };
+}
+
+/** Scores two darts from a single multi-dart throw (counts as 1 throw slot). */
+export function addMultiDart(state: RoundsState, dart1: DartHit, dart2: DartHit): RoundsState {
+  if (state.turnOutcome !== null) return state;
+  if (state.throwsUsed >= 3) return state;
+
+  let s = scoreSingleDart(state, dart1);
+  s = scoreSingleDart(s, dart2);
+  const next = { ...s, throwsUsed: state.throwsUsed + 1 };
+
+  const won = next.turnScore * next.mult >= next.turnTarget;
+  if (!won && next.throwsUsed < 3) return next;
+
+  const reward = won ? TURN_REWARDS[state.turnIndex] : 0;
+  return {
+    ...next,
+    turnOutcome: won ? 'won' : 'lost',
+    currency: next.currency + reward,
+    lastTurnReward: reward,
   };
 }
 
@@ -317,7 +355,7 @@ export function advanceTurn(state: RoundsState): RoundsState {
     newGlobalTurnIndex,
     isNewRound ? undefined : state.shopOffers.powerup,
   );
-  if (newGlobalTurnIndex === 1) newOffers.item = 'glass_sector'; // TODO: remove (testing diamond_sector)
+  if (newGlobalTurnIndex === 1) newOffers.item = 'multi_dart'; // TODO: remove (testing)
 
   return {
     ...state,
@@ -326,6 +364,7 @@ export function advanceTurn(state: RoundsState): RoundsState {
     globalTurnIndex:  newGlobalTurnIndex,
     turnTarget:       computeTarget(newGlobalTurnIndex),
     currentTurnDarts: [],
+    throwsUsed:       0,
     turnScore:        0,
     turnOutcome:      null,
     mult:             0,
@@ -426,6 +465,24 @@ export function assignBoardSector(state: RoundsState, instanceId: string, sector
   };
 }
 
+/** Assign a dart slot index to a specific owned dart item instance. */
+export function assignDartSlot(state: RoundsState, instanceId: string, dartIndex: number): RoundsState {
+  return {
+    ...state,
+    ownedItems: state.ownedItems.map(item => {
+      if (item.instanceId === instanceId) {
+        return { ...item, dartIndex } as OwnedDartItem;
+      }
+      // Evict any other dart item already assigned to this slot
+      const di = item as OwnedDartItem;
+      if (di.dartIndex === dartIndex && getItemDef(item.defId)?.category === 'dart') {
+        return { ...item, dartIndex: null } as OwnedDartItem;
+      }
+      return item;
+    }),
+  };
+}
+
 // ---- Derived helpers (used by game.tsx) ----
 
 /** Cumulative aim-size factor from all owned Sharpshooter powerups. */
@@ -437,4 +494,22 @@ export function getAimFactor(ownedItems: OwnedItem[]): number {
     }
     return f;
   }, 1);
+}
+
+/**
+ * Returns the aimMultiplier for the current throw slot if it has a multi_dart assigned, else 1.
+ * throwsUsed is the number of throws already completed this turn (= index of the next throw).
+ */
+export function getMultiDartAimFactor(throwsUsed: number, ownedItems: OwnedItem[]): number {
+  for (const item of ownedItems) {
+    if (item.defId !== 'multi_dart') continue;
+    const di = item as OwnedDartItem;
+    if (di.dartIndex === throwsUsed) {
+      const def = getItemDef(item.defId);
+      if (def?.category === 'dart' && def.effect.type === 'multi_dart') {
+        return def.effect.aimMultiplier;
+      }
+    }
+  }
+  return 1;
 }

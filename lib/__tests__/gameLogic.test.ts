@@ -114,7 +114,7 @@ describe('addDart — core', () => {
   });
 
   test('ignores dart when 3 darts already thrown', () => {
-    const state = baseState({ currentTurnDarts: [hit(1, 1), hit(2, 2), hit(3, 3)] });
+    const state = baseState({ currentTurnDarts: [hit(1, 1), hit(2, 2), hit(3, 3)], throwsUsed: 3 });
     const next = addDart(state, hit(20, 20));
     expect(next).toBe(state);
   });
