@@ -22,6 +22,7 @@ import {
   getAimFactor,
   getMultiDartAimFactor,
   isMultiDartThrow,
+  isBullseyeDartThrow,
   PACK_COSTS,
 } from '../gameLogic';
 import type { OwnedDartItem } from '../items';
@@ -941,5 +942,141 @@ describe('getMultiDartAimFactor', () => {
   test('returns 1 when items exist but none are multi_dart', () => {
     const item = dartItem('bonus_dart', 0);
     expect(getMultiDartAimFactor(0, [item])).toBe(1);
+  });
+});
+
+// ---- isBullseyeDartThrow ----
+
+describe('isBullseyeDartThrow', () => {
+  test('returns true when bullseye_dart has dartIndex matching throwsUsed', () => {
+    const item = dartItem('bullseye_dart', 1);
+    expect(isBullseyeDartThrow(1, [item])).toBe(true);
+  });
+
+  test('returns false with no owned items', () => {
+    expect(isBullseyeDartThrow(0, [])).toBe(false);
+  });
+
+  test('returns false when bullseye_dart is on a different slot', () => {
+    const item = dartItem('bullseye_dart', 2);
+    expect(isBullseyeDartThrow(0, [item])).toBe(false);
+  });
+
+  test('returns false when non-bullseye item is on the current slot', () => {
+    const item = dartItem('multi_dart', 0);
+    expect(isBullseyeDartThrow(0, [item])).toBe(false);
+  });
+
+  test('returns false when dartIndex is null (unassigned)', () => {
+    const item = dartItem('bullseye_dart', null);
+    expect(isBullseyeDartThrow(0, [item])).toBe(false);
+  });
+});
+
+// ---- bullseye sector unification ----
+
+describe('bullseye sector unification', () => {
+  // Combo: inner + outer bull count as the same sector
+
+  test('outer bull (25) then inner bull (50) triggers x2 combo mult', () => {
+    const s = baseState({ turnTarget: 9999 });
+    const s1 = addDart(s, hit(25, 25));
+    const s2 = addDart(s1, hit(50, 50));
+    // dart1: mult = 1; dart2: same sector (combo) → mult = (1+1)*2 = 4
+    expect(s2.mult).toBe(4);
+  });
+
+  test('inner bull (50) then outer bull (25) triggers x2 combo mult', () => {
+    const s = baseState({ turnTarget: 9999 });
+    const s1 = addDart(s, hit(50, 50));
+    const s2 = addDart(s1, hit(25, 25));
+    expect(s2.mult).toBe(4);
+  });
+
+  test('two inner bulls triggers x2 combo mult', () => {
+    const s = baseState({ turnTarget: 9999 });
+    const s1 = addDart(s, hit(50, 50));
+    const s2 = addDart(s1, hit(50, 50));
+    expect(s2.mult).toBe(4);
+  });
+
+  test('two outer bulls triggers x2 combo mult', () => {
+    const s = baseState({ turnTarget: 9999 });
+    const s1 = addDart(s, hit(25, 25));
+    const s2 = addDart(s1, hit(25, 25));
+    expect(s2.mult).toBe(4);
+  });
+
+  test('bull + non-bull segment does not combo', () => {
+    const s = baseState({ turnTarget: 9999 });
+    const s1 = addDart(s, hit(25, 25));
+    const s2 = addDart(s1, hit(20, 20));
+    // Different sectors: mult = 1 + 1 = 2 (no combo)
+    expect(s2.mult).toBe(2);
+  });
+
+  // Board items: item assigned to 25 fires when 50 lands, and vice versa
+
+  test('bonus_sector assigned to 25 fires when inner bull (50) lands', () => {
+    const s = baseState({ ownedItems: [boardItem('bonus_sector', 25)] });
+    const result = addDart(s, hit(50, 50));
+    expect(result.turnScore).toBe(50 + 25); // score + bonus
+  });
+
+  test('bonus_sector assigned to 50 fires when outer bull (25) lands', () => {
+    const s = baseState({ ownedItems: [boardItem('bonus_sector', 50)] });
+    const result = addDart(s, hit(25, 25));
+    expect(result.turnScore).toBe(25 + 25);
+  });
+
+  test('mult_sector assigned to 25 fires when inner bull (50) lands', () => {
+    const s = baseState({ ownedItems: [boardItem('mult_sector', 25)] });
+    const result = addDart(s, hit(50, 50));
+    // First dart: mult = 1 + multBonus(5) = 6
+    expect(result.mult).toBe(6);
+  });
+
+  test('diamond_sector assigned to 25 fires when inner bull (50) lands', () => {
+    const s = baseState({ turnTarget: 9999, ownedItems: [boardItem('diamond_sector', 25)] });
+    const s1 = addDart(s, hit(20, 20)); // first dart to build mult = 1
+    const result = addDart(s1, hit(50, 50)); // diamond on bull → mult *= 2
+    expect(result.lastDiamondMult).toBe(2);
+  });
+
+  test('diamond_sector assigned to 50 fires when outer bull (25) lands', () => {
+    const s = baseState({ turnTarget: 9999, ownedItems: [boardItem('diamond_sector', 50)] });
+    const s1 = addDart(s, hit(20, 20));
+    const result = addDart(s1, hit(25, 25));
+    expect(result.lastDiamondMult).toBe(2);
+  });
+
+  // Shattered glass: blocks both bull segments
+
+  test('shattered glass_sector on 25 blocks inner bull (50) — scores 0', () => {
+    const glass = { ...boardItem('glass_sector', 25), shattered: true };
+    const s = baseState({ ownedItems: [glass] });
+    const result = addDart(s, hit(50, 50));
+    expect(result.turnScore).toBe(0);
+  });
+
+  test('shattered glass_sector on 50 blocks outer bull (25) — scores 0', () => {
+    const glass = { ...boardItem('glass_sector', 50), shattered: true };
+    const s = baseState({ ownedItems: [glass] });
+    const result = addDart(s, hit(25, 25));
+    expect(result.turnScore).toBe(0);
+  });
+
+  // Non-bull sectors are not affected by bull normalization
+
+  test('board item assigned to segment 20 does not fire on outer bull (25)', () => {
+    const s = baseState({ ownedItems: [boardItem('bonus_sector', 20)] });
+    const result = addDart(s, hit(25, 25));
+    expect(result.turnScore).toBe(25); // no bonus
+  });
+
+  test('board item assigned to segment 25 does not fire on segment 20', () => {
+    const s = baseState({ ownedItems: [boardItem('bonus_sector', 25)] });
+    const result = addDart(s, hit(20, 20));
+    expect(result.turnScore).toBe(20); // no bonus
   });
 });

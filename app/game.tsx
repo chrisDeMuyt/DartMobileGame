@@ -19,7 +19,7 @@ const BoardSectorPicker = lazy(() => import('../components/BoardSectorPicker'));
 const ShatterOverlay = lazy(() => import('../components/ShatterOverlay'));
 import Scoreboard from '../components/Scoreboard';
 import ShopModal from '../components/ShopModal';
-import { getDartScore, DartHit } from '../lib/dartboard';
+import { getDartScore, DartHit, RING_RADII } from '../lib/dartboard';
 import {
   RoundsState,
   Player,
@@ -35,6 +35,7 @@ import {
   getAimFactor,
   isMultiDartThrow,
   getMultiDartAimFactor,
+  isBullseyeDartThrow,
 } from '../lib/gameLogic';
 import { getItemDef } from '../lib/items';
 import type { OwnedBoardItem, OwnedDartItem } from '../lib/items';
@@ -369,8 +370,38 @@ export default function GameScreen() {
 
       const { dartCount } = throwContextRef.current;
       const isMulti = isMultiDartThrow(dartCount, state.ownedItems);
+      const isBullseye = isBullseyeDartThrow(dartCount, state.ownedItems);
 
       setAimPreview(null);
+
+      if (isBullseye) {
+        const isInnerBull = Math.random() < 0.5;
+        let finalX: number;
+        let finalY: number;
+
+        if (isInnerBull) {
+          // Exact center → inner bull (score 50, red)
+          finalX = boardCX;
+          finalY = boardCY;
+        } else {
+          // Midpoint of outer bull ring → outer bull (score 25, green)
+          const outerBullR = ((RING_RADII.bull + RING_RADII.outerBull) / 2) * bRadius;
+          const angle = Math.random() * 2 * Math.PI;
+          finalX = boardCX + outerBullR * Math.cos(angle);
+          finalY = boardCY + outerBullR * Math.sin(angle);
+        }
+
+        const scoreData = getDartScore(finalX - boardCX, finalY - boardCY, bRadius);
+        const dart: DartHit = { x: finalX, y: finalY, ...scoreData };
+        pendingDartRef.current = dart;
+
+        setFlyingDart({
+          from: { x: fromX, y: fromY },
+          to: { x: boardLeft + finalX, y: boardScreenYRef.current + finalY },
+          flightColor: getDartColor(dartCount),
+        });
+        return;
+      }
 
       if (isMulti) {
         // Calculate two independent landing positions — edge-biased distribution (low exponent = less center-heavy)

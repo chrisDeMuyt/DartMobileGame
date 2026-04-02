@@ -11,6 +11,11 @@ import {
   getItemDef,
 } from './items';
 
+/** Normalises inner bull (50) to outer bull (25) so both count as the same sector. */
+function bullseyeNorm(segment: number): number {
+  return segment === 50 ? 25 : segment;
+}
+
 export type GameMode = 'rounds';
 
 export interface Player { id: number; name: string; }
@@ -156,12 +161,13 @@ function computeMult(darts: DartHit[], ownedItems: OwnedItem[]): number {
   let mult = 0;
   const counts: Record<number, number> = {};
   for (const d of scoring) {
-    counts[d.segment] = (counts[d.segment] ?? 0) + 1;
-    const n = counts[d.segment];
+    const seg = bullseyeNorm(d.segment);
+    counts[seg] = (counts[seg] ?? 0) + 1;
+    const n = counts[seg];
     let dartMultBonus = 0;
     for (const item of ownedItems) {
       const bi = item as OwnedBoardItem;
-      if (bi.sector == null || bi.sector !== d.segment) continue;
+      if (bi.sector == null || bullseyeNorm(bi.sector) !== seg) continue;
       const def = getItemDef(item.defId);
       if (def?.category === 'board' && def.effect.type === 'mult_sector') {
         dartMultBonus += def.effect.multBonus;
@@ -190,13 +196,14 @@ function applyDartAdditive(
 ): number {
   if (dart.score === 0) return currentMult;
 
-  const prevHits = prevDarts.filter(d => d.score > 0 && d.segment === dart.segment).length;
+  const dartSeg = bullseyeNorm(dart.segment);
+  const prevHits = prevDarts.filter(d => d.score > 0 && bullseyeNorm(d.segment) === dartSeg).length;
   const n = prevHits + 1;
 
   let multBonus = 0;
   for (const item of ownedItems) {
     const bi = item as OwnedBoardItem;
-    if (bi.sector == null || bi.sector !== dart.segment) continue;
+    if (bi.sector == null || bullseyeNorm(bi.sector) !== dartSeg) continue;
     const def = getItemDef(item.defId);
     if (def?.category === 'board' && def.effect.type === 'mult_sector') {
       multBonus += def.effect.multBonus;
@@ -227,9 +234,9 @@ function scoreSingleDart(state: RoundsState, dartArg: DartHit): RoundsState {
         const def = getItemDef(item.defId);
         return def?.category === 'board' && def.effect.type === 'glass_sector' && bi.shattered && bi.sector != null;
       })
-      .map(item => (item as OwnedBoardItem).sector as number)
+      .map(item => bullseyeNorm((item as OwnedBoardItem).sector as number))
   );
-  const dart = shatteredSectors.has(dartArg.segment) ? { ...dartArg, score: 0, label: 'MISS' } : dartArg;
+  const dart = shatteredSectors.has(bullseyeNorm(dartArg.segment)) ? { ...dartArg, score: 0, label: 'MISS' } : dartArg;
 
   const newDarts = [...state.currentTurnDarts, dart];
 
@@ -238,7 +245,7 @@ function scoreSingleDart(state: RoundsState, dartArg: DartHit): RoundsState {
   if (dart.score > 0) {
     for (const item of state.ownedItems) {
       const bi = item as OwnedBoardItem;
-      if (bi.sector == null || bi.sector !== dart.segment) continue;
+      if (bi.sector == null || bullseyeNorm(bi.sector) !== bullseyeNorm(dart.segment)) continue;
       const def = getItemDef(item.defId);
       if (def?.category === 'board' && def.effect.type === 'bonus_sector') {
         bonus += def.effect.bonusPoints;
@@ -253,7 +260,7 @@ function scoreSingleDart(state: RoundsState, dartArg: DartHit): RoundsState {
   if (dart.score > 0) {
     for (const item of state.ownedItems) {
       const bi = item as OwnedBoardItem;
-      if (bi.sector == null || bi.sector !== dart.segment) continue;
+      if (bi.sector == null || bullseyeNorm(bi.sector) !== bullseyeNorm(dart.segment)) continue;
       const def = getItemDef(item.defId);
       if (def?.category === 'board' && def.effect.type === 'mult_sector') {
         multBonus += def.effect.multBonus;
@@ -271,7 +278,7 @@ function scoreSingleDart(state: RoundsState, dartArg: DartHit): RoundsState {
   if (glassMult > 1) {
     for (const item of state.ownedItems) {
       const bi = item as OwnedBoardItem;
-      if (bi.sector !== dart.segment) continue;
+      if (bi.sector == null || bullseyeNorm(bi.sector) !== bullseyeNorm(dart.segment)) continue;
       const def = getItemDef(item.defId);
       if (def?.category === 'board' && def.effect.type === 'glass_sector' && !bi.shattered) {
         if (Math.random() < def.effect.shatterChance) {
@@ -355,7 +362,7 @@ export function advanceTurn(state: RoundsState): RoundsState {
     newGlobalTurnIndex,
     isNewRound ? undefined : state.shopOffers.powerup,
   );
-  if (newGlobalTurnIndex === 1) newOffers.item = 'multi_dart'; // TODO: remove (testing)
+  if (newGlobalTurnIndex === 1) newOffers.item = 'bullseye_dart'; // TODO: remove (testing)
 
   return {
     ...state,
@@ -518,6 +525,14 @@ export function getMultiDartAimFactor(throwsUsed: number, ownedItems: OwnedItem[
 export function isMultiDartThrow(throwsUsed: number, ownedItems: OwnedItem[]): boolean {
   return ownedItems.some(item => {
     if (item.defId !== 'multi_dart') return false;
+    return (item as OwnedDartItem).dartIndex === throwsUsed;
+  });
+}
+
+/** Returns true if the current throw slot has a bullseye_dart assigned to it. */
+export function isBullseyeDartThrow(throwsUsed: number, ownedItems: OwnedItem[]): boolean {
+  return ownedItems.some(item => {
+    if (item.defId !== 'bullseye_dart') return false;
     return (item as OwnedDartItem).dartIndex === throwsUsed;
   });
 }

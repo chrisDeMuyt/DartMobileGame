@@ -52,8 +52,7 @@ function makeAnnularSector(
 }
 
 function sectorLabel(sector: number): string {
-  if (sector === 50) return 'BULLSEYE';
-  if (sector === 25) return 'OUTER BULL';
+  if (sector === 25) return 'BULLSEYE';
   return `SECTOR  ${sector}`;
 }
 
@@ -117,7 +116,7 @@ export default function BoardSectorPicker({ size, itemName, itemDescription, onC
       .runOnJS(true)
       .onEnd(e => {
         const hit = getDartScore(e.x - cx, e.y - cy, boardR);
-        if (hit.segment !== 0) setSelectedSector(hit.segment);
+        if (hit.segment !== 0) setSelectedSector(hit.segment === 50 ? 25 : hit.segment);
       }),
     [cx, cy, boardR],
   );
@@ -159,17 +158,12 @@ export default function BoardSectorPicker({ size, itemName, itemDescription, onC
               <Path path={highlightSeg.highlight} color="rgba(255, 220, 0, 0.45)" />
             )}
 
-            {/* Highlight: outer bull (25) — ring only, re-draw inner bull on top */}
+            {/* Highlight: bullseye (both rings) */}
             {selectedSector === 25 && (
               <Group>
                 <Circle cx={cx} cy={cy} r={boardR * RING_RADII.outerBull} color="rgba(255, 220, 0, 0.5)" />
-                <Circle cx={cx} cy={cy} r={boardR * RING_RADII.bull}      color={BOARD_COLORS.bull} />
+                <Circle cx={cx} cy={cy} r={boardR * RING_RADII.bull}      color="rgba(255, 220, 0, 0.85)" />
               </Group>
-            )}
-
-            {/* Highlight: inner bull (50) */}
-            {selectedSector === 50 && (
-              <Circle cx={cx} cy={cy} r={boardR * RING_RADII.bull} color="rgba(255, 220, 0, 0.85)" />
             )}
 
             {/* Numbers */}
