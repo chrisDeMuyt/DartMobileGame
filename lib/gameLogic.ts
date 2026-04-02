@@ -253,6 +253,18 @@ function scoreSingleDart(state: RoundsState, dartArg: DartHit): RoundsState {
     }
   }
 
+  // Check dart item effects (bonus_dart)
+  if (dart.score > 0) {
+    for (const item of state.ownedItems) {
+      const di = item as OwnedDartItem;
+      if (di.dartIndex !== state.throwsUsed) continue;
+      const def = getItemDef(item.defId);
+      if (def?.category === 'dart' && def.effect.type === 'bonus_dart') {
+        bonus += def.effect.bonusPoints;
+      }
+    }
+  }
+
   // Current dart's mult bonus only (for animation)
   let multBonus = 0;
   let diamondMult = 1;
@@ -362,7 +374,7 @@ export function advanceTurn(state: RoundsState): RoundsState {
     newGlobalTurnIndex,
     isNewRound ? undefined : state.shopOffers.powerup,
   );
-  if (newGlobalTurnIndex === 1) newOffers.item = 'bullseye_dart'; // TODO: remove (testing)
+  if (newGlobalTurnIndex === 1) newOffers.item = 'bonus_dart'; // TODO: remove (testing)
 
   return {
     ...state,

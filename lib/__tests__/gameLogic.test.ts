@@ -433,6 +433,73 @@ describe('glass_sector', () => {
   });
 });
 
+// ---- addDart — bonus_dart ----
+
+describe('addDart — bonus_dart', () => {
+  test('adds +25 to turnScore and sets lastDartBonus=25 when dart scores', () => {
+    const item = dartItem('bonus_dart', 0);
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    const next = addDart(state, hit(20, 20));
+    expect(next.turnScore).toBe(20 + 25);
+    expect(next.lastDartBonus).toBe(25);
+  });
+
+  test('no bonus on miss', () => {
+    const item = dartItem('bonus_dart', 0);
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    const next = addDart(state, miss());
+    expect(next.turnScore).toBe(0);
+    expect(next.lastDartBonus).toBe(0);
+  });
+
+  test('no bonus when item is assigned to a different slot', () => {
+    const item = dartItem('bonus_dart', 1);
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    const next = addDart(state, hit(20, 20)); // throwsUsed=0, item on slot 1
+    expect(next.turnScore).toBe(20);
+    expect(next.lastDartBonus).toBe(0);
+  });
+
+  test('no bonus when item is unassigned (dartIndex=null)', () => {
+    const item = dartItem('bonus_dart', null);
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    const next = addDart(state, hit(20, 20));
+    expect(next.turnScore).toBe(20);
+    expect(next.lastDartBonus).toBe(0);
+  });
+
+  test('bonus fires on correct slot for second throw (throwsUsed=1)', () => {
+    const item = dartItem('bonus_dart', 1);
+    const state = baseState({ turnTarget: 999, ownedItems: [item], throwsUsed: 1 });
+    const next = addDart(state, hit(20, 20));
+    expect(next.turnScore).toBe(20 + 25);
+    expect(next.lastDartBonus).toBe(25);
+  });
+
+  test('bonus_dart and bonus_sector both hit: bonuses sum in lastDartBonus', () => {
+    const bd = dartItem('bonus_dart', 0);
+    const bs = boardItem('bonus_sector', 20);
+    const state = baseState({ turnTarget: 999, ownedItems: [bd, bs] });
+    const next = addDart(state, hit(20, 20));
+    expect(next.turnScore).toBe(20 + 25 + 25); // sector + bonus_dart + bonus_sector
+    expect(next.lastDartBonus).toBe(50);
+  });
+
+  test('addMultiDart: bonus_dart applies to both sub-darts when on the active slot', () => {
+    const item = dartItem('bonus_dart', 0);
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    const next = addMultiDart(state, hit(20, 20), hit(19, 19));
+    expect(next.turnScore).toBe(20 + 25 + 19 + 25); // each sub-dart gets +25
+  });
+
+  test('addMultiDart: no bonus when bonus_dart is on a different slot', () => {
+    const item = dartItem('bonus_dart', 1);
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    const next = addMultiDart(state, hit(20, 20), hit(19, 19)); // throwsUsed=0
+    expect(next.turnScore).toBe(20 + 19);
+  });
+});
+
 // ---- advanceTurn ----
 
 describe('advanceTurn', () => {
@@ -490,6 +557,12 @@ describe('advanceTurn', () => {
     const state = baseState({ turnOutcome: 'won', turnIndex: 0, globalTurnIndex: 3 });
     const next = advanceTurn(state);
     expect(next.turnTarget).toBe(computeTarget(4));
+  });
+
+  test('first shop (globalTurnIndex 0→1) forces bonus_dart as item offer', () => {
+    const state = baseState({ turnOutcome: 'won', turnIndex: 0, globalTurnIndex: 0 });
+    const next = advanceTurn(state);
+    expect(next.shopOffers.item).toBe('bonus_dart');
   });
 
   test('powerup preserved mid-round (turnIndex 0→1)', () => {

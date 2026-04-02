@@ -178,10 +178,10 @@ export const ITEMS: ItemDef[] = [
     id: 'bonus_dart',
     name: 'Bonus Dart',
     category: 'dart',
-    description: 'Adds +15 bonus points to the score tally on landing.',
+    description: 'Adds +25 bonus points to the score tally on landing.',
     rarity: 'common',
     cost: 12,
-    effect: { type: 'bonus_dart', bonusPoints: 15 },
+    effect: { type: 'bonus_dart', bonusPoints: 25 },
   },
   {
     id: 'mult_dart',
