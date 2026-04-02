@@ -33,6 +33,7 @@ import {
   assignBoardSector,
   assignDartSlot,
   getAimFactor,
+  isMultiDartThrow,
   getMultiDartAimFactor,
 } from '../lib/gameLogic';
 import { getItemDef } from '../lib/items';
@@ -367,20 +368,20 @@ export default function GameScreen() {
       throwFromRef.current = { x: fromX, y: fromY };
 
       const { dartCount } = throwContextRef.current;
-      const isMulti = getMultiDartAimFactor(dartCount, state.ownedItems) > 1;
+      const isMulti = isMultiDartThrow(dartCount, state.ownedItems);
 
       setAimPreview(null);
 
       if (isMulti) {
-        // Calculate two independent landing positions within the (doubled) aim circle
+        // Calculate two independent landing positions — edge-biased distribution (low exponent = less center-heavy)
         const angle1 = Math.random() * 2 * Math.PI;
-        const r1 = Math.pow(Math.random(), 1.8) * AIM_SPREAD;
+        const r1 = Math.pow(Math.random(), 0.4) * AIM_SPREAD;
         const finalX1 = aimX + r1 * Math.cos(angle1);
         const finalY1 = aimY + r1 * Math.sin(angle1);
         const dart1: DartHit = { x: finalX1, y: finalY1, ...getDartScore(finalX1 - boardCX, finalY1 - boardCY, bRadius) };
 
         const angle2 = Math.random() * 2 * Math.PI;
-        const r2 = Math.pow(Math.random(), 1.8) * AIM_SPREAD;
+        const r2 = Math.pow(Math.random(), 0.4) * AIM_SPREAD;
         const finalX2 = aimX + r2 * Math.cos(angle2);
         const finalY2 = aimY + r2 * Math.sin(angle2);
         const dart2: DartHit = { x: finalX2, y: finalY2, ...getDartScore(finalX2 - boardCX, finalY2 - boardCY, bRadius) };

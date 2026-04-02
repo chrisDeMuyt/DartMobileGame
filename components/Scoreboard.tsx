@@ -22,6 +22,8 @@ export default function Scoreboard({ state }: Props) {
   const delta = turnTarget - score;
   const targetMet = score >= turnTarget;
   const comboMult = getComboMult(currentTurnDarts);
+  const multiDartCount = state.ownedItems.filter(item => item.defId === 'multi_dart').length;
+  const totalDarts = 3 + multiDartCount;
 
   const [multTrigger, setMultTrigger] = useState(0);
   const [scoreTrigger, setScoreTrigger] = useState(0);
@@ -52,7 +54,7 @@ export default function Scoreboard({ state }: Props) {
 
       <View style={styles.divider} />
 
-      <DartChips darts={currentTurnDarts} />
+      <DartChips darts={currentTurnDarts} totalDarts={totalDarts} />
 
       <Text style={[styles.deltaHint, targetMet ? styles.deltaHintMet : styles.deltaHintNeed]}>
         {targetMet ? 'TARGET MET!' : `NEED ${delta} MORE`}
@@ -245,7 +247,7 @@ function StatBox({ label, value, valueStyle }: { label: string; value: string; v
 
 // ---- Dart chips ----
 
-function DartChips({ darts }: { darts: DartHit[] }) {
+function DartChips({ darts, totalDarts }: { darts: DartHit[]; totalDarts: number }) {
   return (
     <View style={styles.dartHistory}>
       {darts.map((d, i) => (
@@ -253,7 +255,7 @@ function DartChips({ darts }: { darts: DartHit[] }) {
           <Text style={styles.dartChipLabel}>{d.label}</Text>
         </View>
       ))}
-      {[...Array(Math.max(0, 3 - darts.length))].map((_, i) => (
+      {[...Array(Math.max(0, totalDarts - darts.length))].map((_, i) => (
         <View key={`empty-${i}`} style={styles.dartChipEmpty} />
       ))}
     </View>
@@ -336,7 +338,7 @@ const styles = StyleSheet.create({
     fontSize: 7,
   },
   dartChipEmpty: {
-    width: 68,
+    width: 34,
     height: 32,
     backgroundColor: COLORS.bgDark,
     borderWidth: 2,

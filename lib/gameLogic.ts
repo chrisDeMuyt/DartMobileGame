@@ -513,3 +513,11 @@ export function getMultiDartAimFactor(throwsUsed: number, ownedItems: OwnedItem[
   }
   return 1;
 }
+
+/** Returns true if the current throw slot has a multi_dart assigned to it. */
+export function isMultiDartThrow(throwsUsed: number, ownedItems: OwnedItem[]): boolean {
+  return ownedItems.some(item => {
+    if (item.defId !== 'multi_dart') return false;
+    return (item as OwnedDartItem).dartIndex === throwsUsed;
+  });
+}

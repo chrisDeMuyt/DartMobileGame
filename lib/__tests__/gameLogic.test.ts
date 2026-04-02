@@ -12,14 +12,19 @@ import {
   initGameState,
   generateShopOffers,
   addDart,
+  addMultiDart,
   advanceTurn,
   buyItem,
   claimPackItem,
   buyPowerup,
   assignBoardSector,
+  assignDartSlot,
   getAimFactor,
+  getMultiDartAimFactor,
+  isMultiDartThrow,
   PACK_COSTS,
 } from '../gameLogic';
+import type { OwnedDartItem } from '../items';
 
 // ---- Helpers ----
 
@@ -743,5 +748,198 @@ describe('getAimFactor', () => {
     const s1 = createOwnedItem('sharpshooter');
     const s2 = createOwnedItem('sharpshooter_plus');
     expect(getAimFactor([s1, s2])).toBeCloseTo(0.75 * 0.6667, 4);
+  });
+});
+
+// ---- Helpers for dart item tests ----
+
+function dartItem(defId: string, dartIndex: number | null): OwnedDartItem {
+  return { ...createOwnedItem(defId) as OwnedDartItem, dartIndex };
+}
+
+// ---- addMultiDart ----
+
+describe('addMultiDart', () => {
+  test('adds exactly 2 hits to currentTurnDarts', () => {
+    const s = baseState();
+    const result = addMultiDart(s, hit(20, 20), hit(19, 19));
+    expect(result.currentTurnDarts).toHaveLength(2);
+  });
+
+  test('increments throwsUsed by 1 (not 2)', () => {
+    const s = baseState();
+    const result = addMultiDart(s, hit(20, 20), hit(19, 19));
+    expect(result.throwsUsed).toBe(1);
+  });
+
+  test('both darts scored: turnScore = dart1.score + dart2.score (no combo)', () => {
+    const s = baseState();
+    const result = addMultiDart(s, hit(20, 20), hit(19, 19));
+    expect(result.turnScore).toBe(39);
+  });
+
+  test('returns state unchanged when turnOutcome is already set', () => {
+    const s = baseState({ turnOutcome: 'won' });
+    const result = addMultiDart(s, hit(20, 20), hit(19, 19));
+    expect(result).toBe(s);
+  });
+
+  test('returns state unchanged when throwsUsed >= 3', () => {
+    const s = baseState({ throwsUsed: 3 });
+    const result = addMultiDart(s, hit(20, 20), hit(19, 19));
+    expect(result).toBe(s);
+  });
+
+  test('combo: both darts hit same segment → combo multiplier applied', () => {
+    const s = baseState();
+    // Two darts on segment 20: same-segment pair combo produces mult=4 (matches addDart behaviour)
+    const result = addMultiDart(s, hit(20, 20), hit(20, 20));
+    expect(result.mult).toBe(4);
+  });
+
+  test('bonus_sector fires for each dart that hits the assigned sector', () => {
+    const s = baseState({ ownedItems: [boardItem('bonus_sector', 20)] });
+    // Both darts land on segment 20 → +25 bonus each
+    const result = addMultiDart(s, hit(20, 20), hit(20, 20));
+    expect(result.turnScore).toBe(20 + 25 + 20 + 25); // 90
+  });
+
+  test('mult_sector applies for each dart that hits the assigned sector', () => {
+    const s = baseState({ ownedItems: [boardItem('mult_sector', 20)] });
+    // Each hit on segment 20 adds +5 MULT
+    const result = addMultiDart(s, hit(20, 20), hit(20, 20));
+    // mult: dart1 = 1 (first dart) + 5 mult_sector; dart2 = pair combo + 5 mult_sector
+    expect(result.mult).toBeGreaterThan(6); // at minimum 1+5=6 from dart1 alone
+  });
+
+  test('win: score meets target after both darts → turnOutcome = won', () => {
+    // turnTarget defaults to computeTarget(0) = 20; score darts that sum past it
+    const s = baseState();
+    const result = addMultiDart(s, hit(15, 15), hit(10, 10));
+    // turnScore=25, mult=2 (different segments → normal, wait let's use same segment)
+    // Actually use guaranteed win: hit the same segment twice for combo
+    const s2 = baseState({ turnTarget: 30 });
+    const r2 = addMultiDart(s2, hit(20, 20), hit(19, 19));
+    // turnScore=39, mult=2 (different segments) → 78 >= 30
+    expect(r2.turnOutcome).toBe('won');
+  });
+
+  test('loss: 3rd throw is multi-dart, score still under target → turnOutcome = lost', () => {
+    const s = baseState({ throwsUsed: 2, turnTarget: 10000 });
+    // Score is way below target; this is the last throw
+    const result = addMultiDart(s, hit(1, 1), hit(1, 1));
+    expect(result.throwsUsed).toBe(3);
+    expect(result.turnOutcome).toBe('lost');
+  });
+
+  test('mid-turn: throwsUsed < 3 after throw and score not met → turnOutcome remains null', () => {
+    const s = baseState({ turnTarget: 10000 });
+    const result = addMultiDart(s, hit(1, 1), hit(1, 1));
+    expect(result.throwsUsed).toBe(1);
+    expect(result.turnOutcome).toBeNull();
+  });
+
+  test('advanceTurn after multi-dart resets throwsUsed to 0 and clears currentTurnDarts', () => {
+    // Win the turn with a multi-dart throw then advance
+    const s = baseState({ turnTarget: 20 });
+    const won = addMultiDart(s, hit(20, 20), hit(19, 19));
+    expect(won.turnOutcome).toBe('won');
+    const next = advanceTurn(won);
+    expect(next.throwsUsed).toBe(0);
+    expect(next.currentTurnDarts).toHaveLength(0);
+  });
+});
+
+// ---- assignDartSlot ----
+
+describe('assignDartSlot', () => {
+  test('sets dartIndex on the item with matching instanceId', () => {
+    const item = dartItem('multi_dart', null);
+    const s = baseState({ ownedItems: [item] });
+    const result = assignDartSlot(s, item.instanceId, 1);
+    const found = result.ownedItems.find(i => i.instanceId === item.instanceId) as OwnedDartItem;
+    expect(found.dartIndex).toBe(1);
+  });
+
+  test('does not modify dart items on a different slot', () => {
+    const item1 = dartItem('multi_dart', 0);
+    const item2 = dartItem('bonus_dart', 2);
+    const s = baseState({ ownedItems: [item1, item2] });
+    const result = assignDartSlot(s, item1.instanceId, 1);
+    const other = result.ownedItems.find(i => i.instanceId === item2.instanceId) as OwnedDartItem;
+    expect(other.dartIndex).toBe(2); // unchanged
+  });
+
+  test('evicts another dart item already on the same slot', () => {
+    const occupant = dartItem('bonus_dart', 1);
+    const newcomer = dartItem('multi_dart', null);
+    const s = baseState({ ownedItems: [occupant, newcomer] });
+    const result = assignDartSlot(s, newcomer.instanceId, 1);
+    const evicted = result.ownedItems.find(i => i.instanceId === occupant.instanceId) as OwnedDartItem;
+    expect(evicted.dartIndex).toBeNull();
+  });
+
+  test('does not evict dart items on a different slot', () => {
+    const other = dartItem('bonus_dart', 2);
+    const newcomer = dartItem('multi_dart', null);
+    const s = baseState({ ownedItems: [other, newcomer] });
+    const result = assignDartSlot(s, newcomer.instanceId, 1);
+    const unchanged = result.ownedItems.find(i => i.instanceId === other.instanceId) as OwnedDartItem;
+    expect(unchanged.dartIndex).toBe(2);
+  });
+
+  test('non-dart items are unaffected by assignment', () => {
+    const board = boardItem('bonus_sector', 5);
+    const di = dartItem('multi_dart', null);
+    const s = baseState({ ownedItems: [board, di] });
+    const result = assignDartSlot(s, di.instanceId, 0);
+    const boardAfter = result.ownedItems.find(i => i.instanceId === board.instanceId);
+    expect(boardAfter).toEqual(board); // exactly the same object/value
+  });
+});
+
+// ---- isMultiDartThrow ----
+
+describe('isMultiDartThrow', () => {
+  test('returns true when multi_dart has dartIndex matching throwsUsed', () => {
+    const item = dartItem('multi_dart', 1);
+    expect(isMultiDartThrow(1, [item])).toBe(true);
+  });
+
+  test('returns false with no owned items', () => {
+    expect(isMultiDartThrow(0, [])).toBe(false);
+  });
+
+  test('returns false when multi_dart is on a different slot', () => {
+    const item = dartItem('multi_dart', 2);
+    expect(isMultiDartThrow(0, [item])).toBe(false);
+  });
+
+  test('returns false when non-multi-dart item is on the current slot', () => {
+    const item = dartItem('bonus_dart', 0);
+    expect(isMultiDartThrow(0, [item])).toBe(false);
+  });
+});
+
+// ---- getMultiDartAimFactor ----
+
+describe('getMultiDartAimFactor', () => {
+  test('returns aimMultiplier (2) when multi_dart is assigned to the current slot', () => {
+    const item = dartItem('multi_dart', 0);
+    expect(getMultiDartAimFactor(0, [item])).toBe(2);
+  });
+
+  test('returns 1 with no owned items', () => {
+    expect(getMultiDartAimFactor(0, [])).toBe(1);
+  });
+
+  test('returns 1 when multi_dart is on a different slot', () => {
+    const item = dartItem('multi_dart', 2);
+    expect(getMultiDartAimFactor(0, [item])).toBe(1);
+  });
+
+  test('returns 1 when items exist but none are multi_dart', () => {
+    const item = dartItem('bonus_dart', 0);
+    expect(getMultiDartAimFactor(0, [item])).toBe(1);
   });
 });
