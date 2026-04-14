@@ -1,16 +1,15 @@
 import React, { useMemo } from 'react';
-import { Platform } from 'react-native';
 import {
   Canvas,
   Path,
   Rect,
   Circle,
   Text,
-  matchFont,
+  useFont,
   Skia,
   Group,
 } from '@shopify/react-native-skia';
-import { SEGMENT_ORDER, RING_RADII, DartHit } from '../lib/dartboard';
+import { SEGMENT_ORDER, RING_RADII, DartHit, getDartScore } from '../lib/dartboard';
 
 export interface DartMarker {
   x: number;
@@ -111,6 +110,66 @@ function makePlaidLines(size: number, spacing = 14, direction: 'h' | 'v') {
   return path;
 }
 
+function buildPixelPaths(
+  boardR: number, cx: number, cy: number,
+  pixelSize: number,
+  deadSectors: number[]
+): Map<string, ReturnType<typeof Skia.Path.Make>> {
+  const borderR = boardR * 1.18;
+  const colorPaths = new Map<string, ReturnType<typeof Skia.Path.Make>>();
+
+  const get = (color: string) => {
+    if (!colorPaths.has(color)) colorPaths.set(color, Skia.Path.Make());
+    return colorPaths.get(color)!;
+  };
+
+  const minX = Math.floor(cx - borderR);
+  const maxX = Math.ceil(cx + borderR);
+  const minY = Math.floor(cy - borderR);
+  const maxY = Math.ceil(cy + borderR);
+
+  for (let px = minX; px < maxX; px += pixelSize) {
+    for (let py = minY; py < maxY; py += pixelSize) {
+      const pcx = px + pixelSize / 2;
+      const pcy = py + pixelSize / 2;
+      const dx = pcx - cx;
+      const dy = pcy - cy;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist > borderR) continue;
+
+      let color: string;
+
+      if (dist > boardR) {
+        color = COLORS.border;
+      } else {
+        const { segment, multiplier } = getDartScore(dx, dy, boardR);
+        if (deadSectors.includes(segment)) {
+          color = COLORS.border;
+        } else if (segment === 50) {
+          color = COLORS.bull;
+        } else if (segment === 25) {
+          color = COLORS.outerBull;
+        } else {
+          const segIdx = SEGMENT_ORDER.indexOf(segment);
+          const isEven = segIdx % 2 === 0;
+          if (multiplier === 3) {
+            color = isEven ? COLORS.tripleGreenEven : COLORS.tripleRedOdd;
+          } else if (multiplier === 2) {
+            color = isEven ? COLORS.doubleRedEven : COLORS.doubleGreenOdd;
+          } else {
+            color = isEven ? COLORS.singleBlack : COLORS.singleCream;
+          }
+        }
+      }
+
+      get(color).addRect(Skia.XYWHRect(px, py, pixelSize, pixelSize));
+    }
+  }
+
+  return colorPaths;
+}
+
 function makeAnnularSector(
   cx: number,
   cy: number,
@@ -152,17 +211,11 @@ export default function Dartboard({ size, darts = [], aimIndicator, boardEffects
   const numRadius = boardR * 1.22;
   const fontSize = Math.max(9, boardR * 0.1);
 
-  const font = useMemo(() => {
-    try {
-      return matchFont({
-        fontFamily: Platform.select({ ios: 'Helvetica', android: 'sans-serif' }) ?? 'sans-serif',
-        fontSize,
-        fontWeight: 'bold',
-      });
-    } catch {
-      return null;
-    }
-  }, [fontSize]);
+  const font = useFont(
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('@expo-google-fonts/press-start-2p/400Regular/PressStart2P_400Regular.ttf'),
+    fontSize
+  );
 
   const segments = useMemo(() => {
     return SEGMENT_ORDER.map((num, i) => {
@@ -206,6 +259,12 @@ export default function Dartboard({ size, darts = [], aimIndicator, boardEffects
     });
   }, [size]);
 
+  const pixelSize = Math.max(2, Math.round(boardR / 50));
+  const pixelPaths = useMemo(
+    () => buildPixelPaths(boardR, cx, cy, pixelSize, deadSectors ?? []),
+    [boardR, cx, cy, pixelSize, deadSectors]
+  );
+
   const starFieldPath = useMemo(() => makeStarField(size), [size]);
   const plaidHLines = useMemo(() => makePlaidLines(size, 14, 'h'), [size]);
   const plaidVLines = useMemo(() => makePlaidLines(size, 14, 'v'), [size]);
@@ -215,47 +274,10 @@ export default function Dartboard({ size, darts = [], aimIndicator, boardEffects
 
   return (
     <Canvas style={{ width: size, height: size }}>
-      {/* Wooden border */}
-      <Circle cx={cx} cy={cy} r={boardR * 1.18} color={COLORS.border} />
-
-      {/* Board background */}
-      <Circle cx={cx} cy={cy} r={boardR} color={COLORS.singleBlack} />
-
-      {/* Segments */}
-      {segments.map(({ num, innerSingle, triple, outerSingle, double, singleColor, tripleColor, doubleColor }) => {
-        if (deadSectors?.includes(num)) {
-          return (
-            <Group key={num}>
-              <Path path={innerSingle} color={COLORS.border} />
-              <Path path={triple} color={COLORS.border} />
-              <Path path={outerSingle} color={COLORS.border} />
-              <Path path={double} color={COLORS.border} />
-            </Group>
-          );
-        }
-        return (
-          <Group key={num}>
-            <Path path={innerSingle} color={singleColor} />
-            <Path path={triple} color={tripleColor} />
-            <Path path={outerSingle} color={singleColor} />
-            <Path path={double} color={doubleColor} />
-          </Group>
-        );
-      })}
-
-      {/* Outer bull (25) */}
-      <Circle cx={cx} cy={cy} r={boardR * RING_RADII.outerBull} color={COLORS.outerBull} />
-
-      {/* Inner bull (50) */}
-      <Circle cx={cx} cy={cy} r={boardR * RING_RADII.bull} color={COLORS.bull} />
-
-      {/* Dead bullseye sectors (shattered glass) — paint over with board background */}
-      {deadSectors?.includes(25) && (
-        <Circle cx={cx} cy={cy} r={boardR * RING_RADII.outerBull} color={COLORS.border} />
-      )}
-      {deadSectors?.includes(50) && (
-        <Circle cx={cx} cy={cy} r={boardR * RING_RADII.bull} color={COLORS.border} />
-      )}
+      {/* Pixel grid board */}
+      {Array.from(pixelPaths.entries()).map(([color, path]) => (
+        <Path key={color} path={path} color={color} />
+      ))}
 
       {/* Board effect overlays — inner and outer single only (no triple/double) */}
       {boardEffects?.map((effect) => {
