@@ -500,6 +500,100 @@ describe('addDart — bonus_dart', () => {
   });
 });
 
+// ---- addDart — mult_dart ----
+
+describe('addDart — mult_dart', () => {
+  test('adds +3 to mult and sets lastMultDartBonus=3 when dart scores', () => {
+    const item = dartItem('mult_dart', 0);
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    const next = addDart(state, hit(20, 20));
+    expect(next.mult).toBe(1 + 3); // base +1 from scoring dart + 3 from mult_dart
+    expect(next.lastMultDartBonus).toBe(3);
+  });
+
+  test('no bonus on miss', () => {
+    const item = dartItem('mult_dart', 0);
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    const next = addDart(state, miss());
+    expect(next.mult).toBe(0);
+    expect(next.lastMultDartBonus).toBe(0);
+  });
+
+  test('no bonus when item is assigned to a different slot', () => {
+    const item = dartItem('mult_dart', 1);
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    const next = addDart(state, hit(20, 20)); // throwsUsed=0, item on slot 1
+    expect(next.mult).toBe(1);
+    expect(next.lastMultDartBonus).toBe(0);
+  });
+
+  test('no bonus when item is unassigned (dartIndex=null)', () => {
+    const item = dartItem('mult_dart', null);
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    const next = addDart(state, hit(20, 20));
+    expect(next.mult).toBe(1);
+    expect(next.lastMultDartBonus).toBe(0);
+  });
+
+  test('bonus fires on correct slot for second throw (throwsUsed=1)', () => {
+    const item = dartItem('mult_dart', 1);
+    const state = baseState({ turnTarget: 999, ownedItems: [item], throwsUsed: 1 });
+    const next = addDart(state, hit(20, 20));
+    expect(next.mult).toBe(1 + 3);
+    expect(next.lastMultDartBonus).toBe(3);
+  });
+
+  test('+3 is inside the combo multiply (hits same sector twice)', () => {
+    const item = dartItem('mult_dart', 0);
+    // First dart: mult becomes 1 + 3 = 4 (slot 0 fires mult_dart)
+    const s1 = baseState({ turnTarget: 999, ownedItems: [item] });
+    const after1 = addDart(s1, hit(20, 20));
+    expect(after1.mult).toBe(4);
+
+    // Second dart on same sector (slot 1, no mult_dart): combo n=2
+    // applyDartAdditive: (4 + 1 + 0) * 2 = 10
+    const after2 = addDart(after1, hit(20, 20));
+    expect(after2.mult).toBe(10);
+  });
+
+  test('+3 is inside the combo multiply when mult_dart is on the combo throw', () => {
+    const item = dartItem('mult_dart', 1);
+    // First dart (slot 0, no mult_dart): mult = 1
+    const s1 = baseState({ turnTarget: 999, ownedItems: [item] });
+    const after1 = addDart(s1, hit(20, 20));
+    expect(after1.mult).toBe(1);
+
+    // Second dart same sector (slot 1, mult_dart fires): combo n=2
+    // applyDartAdditive: (1 + 1 + 3) * 2 = 10
+    const after2 = addDart(after1, hit(20, 20));
+    expect(after2.mult).toBe(10);
+  });
+
+  test('mult_dart and mult_sector both hit: bonuses combine inside combo multiply', () => {
+    const md = dartItem('mult_dart', 0);
+    const ms = boardItem('mult_sector', 20);
+    const state = baseState({ turnTarget: 999, ownedItems: [md, ms] });
+    // applyDartAdditive: 0 + 1 + 5 (mult_sector) + 3 (mult_dart) = 9
+    const next = addDart(state, hit(20, 20));
+    expect(next.mult).toBe(1 + 5 + 3);
+  });
+
+  test('addMultiDart: mult_dart applies to both sub-darts when on the active slot', () => {
+    const item = dartItem('mult_dart', 0);
+    const state = baseState({ turnTarget: 999, ownedItems: [item] });
+    // dart1 (seg 20): 0 + 1 + 3 = 4; dart2 (seg 19, different segment): 4 + 1 + 3 = 8
+    const next = addMultiDart(state, hit(20, 20), hit(19, 19));
+    expect(next.mult).toBe(8);
+  });
+
+  test('lastMultDartBonus resets to 0 on advanceTurn', () => {
+    const item = dartItem('mult_dart', 0);
+    const state = baseState({ turnTarget: 1, ownedItems: [item], turnOutcome: 'won', lastMultDartBonus: 3 });
+    const next = advanceTurn(state);
+    expect(next.lastMultDartBonus).toBe(0);
+  });
+});
+
 // ---- advanceTurn ----
 
 describe('advanceTurn', () => {
@@ -559,10 +653,10 @@ describe('advanceTurn', () => {
     expect(next.turnTarget).toBe(computeTarget(4));
   });
 
-  test('first shop (globalTurnIndex 0→1) forces bonus_dart as item offer', () => {
+  test('first shop (globalTurnIndex 0→1) forces mult_dart as item offer', () => {
     const state = baseState({ turnOutcome: 'won', turnIndex: 0, globalTurnIndex: 0 });
     const next = advanceTurn(state);
-    expect(next.shopOffers.item).toBe('bonus_dart');
+    expect(next.shopOffers.item).toBe('mult_dart');
   });
 
   test('powerup preserved mid-round (turnIndex 0→1)', () => {

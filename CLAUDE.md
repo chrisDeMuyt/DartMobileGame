@@ -16,7 +16,15 @@ npx expo start --android
 npm install --legacy-peer-deps
 ```
 
-There are no automated tests in this project.
+```bash
+# Run all tests (ts-jest, node environment)
+npm test
+
+# Run a single test file
+npx jest lib/__tests__/gameLogic.test.ts
+```
+
+Tests live in `lib/__tests__/` and cover pure logic only (`dartboard.ts`, `gameLogic.ts`, `items.ts`, and cross-module integration). No component tests.
 
 ## Architecture
 
@@ -59,6 +67,8 @@ Final score = `turnScore × mult`.
 - **`FlyingDartOverlay.tsx`** — Animated dart-in-flight from slingshot origin to board target; calls `onLanded` on arrival.
 - **`ShopModal.tsx`** — Full-screen shop; renders item/pack/powerup offers from `state.shopOffers`.
 - **`BoardSectorPicker.tsx`** — Skia mini-board overlay for assigning a purchased board item to a specific sector.
+- **`ShatterOverlay.tsx`** — Skia + Animated overlay that plays the glass-shard shatter animation for a `glass_sector` item when it breaks.
+- **`DartSlotPicker.tsx`** — UI for assigning a purchased `dart` item to a specific dart slot (1–3); shows current occupant of each slot.
 - **`Scoreboard.tsx`** — Displays current turn score, mult, target progress.
 
 ### Hooks

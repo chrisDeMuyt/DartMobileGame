@@ -48,7 +48,7 @@ export default function Scoreboard({ state }: Props) {
         <StatBox label="TARGET" value={String(turnTarget)} valueStyle={styles.goldValue} />
         <AnimatedStatBox label="POINTS" numericValue={turnScore} labelStyle={styles.cyanLabel} valueStyle={styles.cyanValue} deltaColor={COLORS.cyan} onAnimDone={handlePointsDone} bonusDelta={lastDartBonus} />
         <Text style={styles.multSymbol}>×</Text>
-        <AnimatedStatBox label="MULT" numericValue={mult} comboMult={comboMult} labelStyle={styles.redLabel} valueStyle={styles.redValue} deltaColor={COLORS.red} triggerKey={multTrigger} onAnimDone={handleMultDone} multSectorBonus={lastDartMultBonus} diamondMult={state.lastDiamondMult} glassMult={state.lastGlassMult} />
+        <AnimatedStatBox label="MULT" numericValue={mult} comboMult={comboMult} labelStyle={styles.redLabel} valueStyle={styles.redValue} deltaColor={COLORS.red} triggerKey={multTrigger} onAnimDone={handleMultDone} multSectorBonus={lastDartMultBonus} multDartBonus={state.lastMultDartBonus} diamondMult={state.lastDiamondMult} glassMult={state.lastGlassMult} />
         <AnimatedStatBox label="SCORE" numericValue={score} valueStyle={styles.goldValue} deltaColor={COLORS.gold} triggerKey={scoreTrigger} />
       </View>
 
@@ -101,6 +101,7 @@ function AnimatedStatBox({
   onAnimDone,
   bonusDelta,
   multSectorBonus,
+  multDartBonus,
   diamondMult,
   glassMult,
 }: {
@@ -116,6 +117,7 @@ function AnimatedStatBox({
   onAnimDone?: (duration: number) => void;
   bonusDelta?: number;
   multSectorBonus?: number;
+  multDartBonus?: number;
   diamondMult?: number;
   glassMult?: number;
 }) {
@@ -123,7 +125,7 @@ function AnimatedStatBox({
   const prevComboRef = useRef(comboMult ?? 1);
   const [popups, setPopups] = useState<Popup[]>([]);
   const [displayedValue, setDisplayedValue] = useState(numericValue);
-  const pendingRef = useRef<{ diff: number; newValue: number; newCombo: number; prevCombo: number; multSectorBonus: number; diamondMult: number; glassMult: number } | null>(null);
+  const pendingRef = useRef<{ diff: number; newValue: number; newCombo: number; prevCombo: number; multSectorBonus: number; multDartBonus: number; diamondMult: number; glassMult: number } | null>(null);
 
   const spawn = useCallback((text: string, color: string, delay = 0) => {
     const id = Date.now() + Math.random();
@@ -133,7 +135,7 @@ function AnimatedStatBox({
     }, delay);
   }, []);
 
-  const fireAnim = useCallback((diff: number, newCombo: number, prevCombo: number, newValue: number, bonusDeltaArg = 0, multSectorBonusArg = 0, diamondMultArg = 1, glassMultArg = 1) => {
+  const fireAnim = useCallback((diff: number, newCombo: number, prevCombo: number, newValue: number, bonusDeltaArg = 0, multSectorBonusArg = 0, multDartBonusArg = 0, diamondMultArg = 1, glassMultArg = 1) => {
     // Separate out the diamond multiplier so we can animate it as a distinct step
     const prevValue = newValue - diff;
     const combinedMult = diamondMultArg * glassMultArg;
@@ -142,35 +144,43 @@ function AnimatedStatBox({
 
     let duration: number;
     if (newCombo > prevCombo) {
-      // Combo: show +1, optionally +multBonus MULT!, then ×N
+      // Combo: show +1, optionally +multSectorBonus MULT!, optionally +multDartBonus DART MULT!, then ×N
       const afterDart = prevValue + 1;
       setDisplayedValue(afterDart);
       spawn('+1', deltaColor, 0);
+      let preComboDelay = 380;
       if (multSectorBonusArg > 0) {
         setTimeout(() => setDisplayedValue(afterDart + multSectorBonusArg), 380);
         spawn(`+${multSectorBonusArg} MULT!`, COLORS.red, 380);
-        setTimeout(() => setDisplayedValue(baseNewValue), 760);
-        spawn(`×${newCombo}`, COLORS.gold, 760);
-        duration = 760 + 900;
-      } else {
-        setTimeout(() => setDisplayedValue(baseNewValue), 380);
-        spawn(`×${newCombo}`, COLORS.gold, 380);
-        duration = 380 + 900;
+        preComboDelay = 760;
       }
+      if (multDartBonusArg > 0) {
+        setTimeout(() => setDisplayedValue(afterDart + multSectorBonusArg + multDartBonusArg), preComboDelay);
+        spawn(`+${multDartBonusArg} DART MULT!`, COLORS.gold, preComboDelay);
+        preComboDelay += 380;
+      }
+      setTimeout(() => setDisplayedValue(baseNewValue), preComboDelay);
+      spawn(`×${newCombo}`, COLORS.gold, preComboDelay);
+      duration = preComboDelay + 900;
     } else {
-      const dartDiff = baseDiff - bonusDeltaArg - multSectorBonusArg;
-      const totalExtra = bonusDeltaArg + multSectorBonusArg;
+      const dartDiff = baseDiff - bonusDeltaArg - multSectorBonusArg - multDartBonusArg;
+      const totalExtra = bonusDeltaArg + multSectorBonusArg + multDartBonusArg;
       setDisplayedValue(totalExtra > 0 ? baseNewValue - totalExtra : baseNewValue);
       spawn(`+${dartDiff}`, deltaColor, 0);
       duration = 900;
       if (bonusDeltaArg > 0) {
-        setTimeout(() => setDisplayedValue(baseNewValue - multSectorBonusArg), duration);
+        setTimeout(() => setDisplayedValue(baseNewValue - multSectorBonusArg - multDartBonusArg), duration);
         spawn(`+${bonusDeltaArg} BONUS!`, COLORS.gold, duration);
         duration += 900;
       }
       if (multSectorBonusArg > 0) {
-        setTimeout(() => setDisplayedValue(baseNewValue), duration);
+        setTimeout(() => setDisplayedValue(baseNewValue - multDartBonusArg), duration);
         spawn(`+${multSectorBonusArg} MULT!`, COLORS.red, duration);
+        duration += 900;
+      }
+      if (multDartBonusArg > 0) {
+        setTimeout(() => setDisplayedValue(baseNewValue), duration);
+        spawn(`+${multDartBonusArg} DART MULT!`, COLORS.gold, duration);
         duration += 900;
       }
     }
@@ -210,7 +220,7 @@ function AnimatedStatBox({
       fireAnim(diff, newCombo, prevCombo, numericValue, bonusDelta ?? 0, 0);
     } else {
       // MULT / SCORE: hold until triggerKey fires
-      pendingRef.current = { diff, newValue: numericValue, newCombo, prevCombo, multSectorBonus: multSectorBonus ?? 0, diamondMult: diamondMult ?? 1, glassMult: glassMult ?? 1 };
+      pendingRef.current = { diff, newValue: numericValue, newCombo, prevCombo, multSectorBonus: multSectorBonus ?? 0, multDartBonus: multDartBonus ?? 0, diamondMult: diamondMult ?? 1, glassMult: glassMult ?? 1 };
     }
   }, [numericValue]);
 
@@ -220,7 +230,7 @@ function AnimatedStatBox({
     const p = pendingRef.current;
     if (!p) return;
     pendingRef.current = null;
-    fireAnim(p.diff, p.newCombo, p.prevCombo, p.newValue, 0, p.multSectorBonus, p.diamondMult, p.glassMult);
+    fireAnim(p.diff, p.newCombo, p.prevCombo, p.newValue, 0, p.multSectorBonus, p.multDartBonus, p.diamondMult, p.glassMult);
   }, [triggerKey]);
 
   return (

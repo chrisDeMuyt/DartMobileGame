@@ -53,12 +53,17 @@ export interface RoundsState {
   turnScore: number;
   turnOutcome: TurnOutcome;
   mult: number;
+  /** Accumulated product of all diamond_sector multipliers applied this turn.
+   *  Used so `applyDartAdditive` receives the pre-diamond additive base,
+   *  allowing diamond to compound on every hit of the same sector. */
+  accumulatedDiamondFactor: number;
   currency: number;
   ownedItems: OwnedItem[];
   shopOffers: ShopOffers;
   lastTurnReward: number;
   lastDartBonus: number;
   lastDartMultBonus: number;
+  lastMultDartBonus: number;
   lastDiamondMult: number;
   lastGlassMult: number;
   lastShatterSector: number | null;
@@ -142,12 +147,14 @@ export function initGameState(player: Player): RoundsState {
     turnScore: 0,
     turnOutcome: null,
     mult: 0,
+    accumulatedDiamondFactor: 1,
     currency: 100, // TODO: remove (testing)
     ownedItems: [],
     shopOffers: generateShopOffers([], 0),
     lastTurnReward: 0,
     lastDartBonus: 0,
     lastDartMultBonus: 0,
+    lastMultDartBonus: 0,
     lastDiamondMult: 1,
     lastGlassMult: 1,
     lastShatterSector: null,
@@ -193,6 +200,7 @@ function applyDartAdditive(
   dart: DartHit,
   prevDarts: DartHit[],
   ownedItems: OwnedItem[],
+  dartMultBonus = 0,
 ): number {
   if (dart.score === 0) return currentMult;
 
@@ -211,9 +219,9 @@ function applyDartAdditive(
   }
 
   if (n >= 2) {
-    return (currentMult + 1 + multBonus) * n;
+    return (currentMult + 1 + multBonus + dartMultBonus) * n;
   }
-  return currentMult + 1 + multBonus;
+  return currentMult + 1 + multBonus + dartMultBonus;
 }
 
 // ---- Turn actions ----
@@ -265,6 +273,19 @@ function scoreSingleDart(state: RoundsState, dartArg: DartHit): RoundsState {
     }
   }
 
+  // Check dart item effects (mult_dart)
+  let multDartBonus = 0;
+  if (dart.score > 0) {
+    for (const item of state.ownedItems) {
+      const di = item as OwnedDartItem;
+      if (di.dartIndex !== state.throwsUsed) continue;
+      const def = getItemDef(item.defId);
+      if (def?.category === 'dart' && def.effect.type === 'mult_dart') {
+        multDartBonus += def.effect.multBonus;
+      }
+    }
+  }
+
   // Current dart's mult bonus only (for animation)
   let multBonus = 0;
   let diamondMult = 1;
@@ -305,17 +326,24 @@ function scoreSingleDart(state: RoundsState, dartArg: DartHit): RoundsState {
   }
 
   const newScore = state.turnScore + dart.score + bonus;
-  const additiveMult = applyDartAdditive(state.mult, dart, state.currentTurnDarts, state.ownedItems);
-  const newMult = additiveMult * diamondMult * glassMult;
+  // Strip the accumulated diamond factor before the additive calculation so
+  // that diamond compounds on repeated hits (instead of inflating the base).
+  // Glass is intentionally NOT tracked this way — it is a one-shot multiplier.
+  const preMultBase = state.mult / state.accumulatedDiamondFactor;
+  const additiveMult = applyDartAdditive(preMultBase, dart, state.currentTurnDarts, state.ownedItems, multDartBonus);
+  const newAccumulatedDiamondFactor = state.accumulatedDiamondFactor * diamondMult;
+  const newMult = additiveMult * newAccumulatedDiamondFactor * glassMult;
 
   return {
     ...state,
     currentTurnDarts: newDarts,
     turnScore: newScore,
     mult: newMult,
+    accumulatedDiamondFactor: newAccumulatedDiamondFactor,
     ownedItems: newOwnedItems,
     lastDartBonus: bonus,
     lastDartMultBonus: multBonus,
+    lastMultDartBonus: multDartBonus,
     lastDiamondMult: diamondMult,
     lastGlassMult: glassMult,
     lastShatterSector: shatterSector,
@@ -374,7 +402,7 @@ export function advanceTurn(state: RoundsState): RoundsState {
     newGlobalTurnIndex,
     isNewRound ? undefined : state.shopOffers.powerup,
   );
-  if (newGlobalTurnIndex === 1) newOffers.item = 'bonus_dart'; // TODO: remove (testing)
+  if (newGlobalTurnIndex === 1) newOffers.item = 'mult_dart'; // TODO: remove (testing)
 
   return {
     ...state,
@@ -387,10 +415,12 @@ export function advanceTurn(state: RoundsState): RoundsState {
     turnScore:        0,
     turnOutcome:      null,
     mult:             0,
+    accumulatedDiamondFactor: 1,
     shopOffers:       newOffers,
     lastTurnReward:   0,
     lastDartBonus:    0,
     lastDartMultBonus: 0,
+    lastMultDartBonus: 0,
     lastDiamondMult:  1,
     lastGlassMult:    1,
     lastShatterSector: null,
