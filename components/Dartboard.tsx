@@ -450,17 +450,25 @@ export default function Dartboard({ size, darts = [], aimIndicator, boardEffects
         </Group>
       )}
 
-      {/* Dart markers */}
-      {darts.map((dart, i) => (
-        <Group key={`dart-${i}`}>
-          {/* Shadow */}
-          <Circle cx={dart.x + 1} cy={dart.y + 1} r={6} color="rgba(0,0,0,0.4)" />
-          {/* Dart dot */}
-          <Circle cx={dart.x} cy={dart.y} r={5} color={dart.color} />
-          {/* Highlight */}
-          <Circle cx={dart.x - 1} cy={dart.y - 1} r={2} color="rgba(255,255,255,0.4)" />
-        </Group>
-      ))}
+      {/* Dart markers — 3 flight lines meeting at impact point */}
+      {darts.map((dart, i) => {
+        const cx = dart.x;
+        const cy = dart.y;
+        const flightLen = 7;
+        return (
+          <Group key={`dart-${i}`}>
+            {[Math.PI / 2, Math.PI / 2 + (2 * Math.PI) / 3, Math.PI / 2 + (4 * Math.PI) / 3].map((θ, j) => (
+              <Path
+                key={j}
+                path={`M ${cx} ${cy} L ${(cx + flightLen * Math.cos(θ)).toFixed(1)} ${(cy + flightLen * Math.sin(θ)).toFixed(1)}`}
+                color="#00d4ff"
+                style="stroke"
+                strokeWidth={2}
+              />
+            ))}
+          </Group>
+        );
+      })}
     </Canvas>
   );
 }

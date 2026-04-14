@@ -90,58 +90,44 @@ function getDartColor(throwIndex: number): string {
 
 // ---- Throw slot indicator ----
 
-const SLOT_BOX = 14;
-const SLOT_DIAG = Math.ceil(Math.sqrt(2) * SLOT_BOX * 1.1); // wide enough to span corner-to-corner
-
-function ThrowSlot({ used, isMulti }: { used: boolean; isMulti: boolean }) {
-  const boxes = isMulti ? 2 : 1;
+function DartIcon({ used }: { used: boolean }) {
+  const bodyColor = used ? '#2a2a3a' : COLORS.gold;
+  const flightColor = used ? '#2a2a3a' : '#00d4ff';
   return (
-    <View style={slotStyles.column}>
-      {Array.from({ length: boxes }).map((_, i) => (
-        <View key={i} style={[slotStyles.box, used && slotStyles.boxUsed]}>
-          {used && (
-            <>
-              <View style={slotStyles.xLine1} />
-              <View style={slotStyles.xLine2} />
-            </>
-          )}
-        </View>
-      ))}
+    <View style={{ alignItems: 'center' }}>
+      {/* Flights — two wing blocks side by side */}
+      <View style={{ flexDirection: 'row', gap: 2 }}>
+        <View style={{ width: 5, height: 4, backgroundColor: flightColor }} />
+        <View style={{ width: 5, height: 4, backgroundColor: flightColor }} />
+      </View>
+      {/* Barrel */}
+      <View style={{ width: 4, height: 14, backgroundColor: bodyColor }} />
+      {/* Tip — triangle pointing down */}
+      <View style={{
+        width: 0, height: 0,
+        borderLeftWidth: 3, borderRightWidth: 3, borderTopWidth: 6,
+        borderLeftColor: 'transparent', borderRightColor: 'transparent',
+        borderTopColor: bodyColor,
+      }} />
     </View>
   );
 }
 
-const slotStyles = StyleSheet.create({
-  column: {
-    alignItems: 'center',
-    gap: 2,
-  },
-  box: {
-    width: SLOT_BOX,
-    height: SLOT_BOX,
-    backgroundColor: COLORS.gold,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  boxUsed: {
-    backgroundColor: COLORS.bgCard,
-  },
-  xLine1: {
-    position: 'absolute',
-    width: SLOT_DIAG,
-    height: 2,
-    backgroundColor: '#000000',
-    transform: [{ rotate: '45deg' }],
-  },
-  xLine2: {
-    position: 'absolute',
-    width: SLOT_DIAG,
-    height: 2,
-    backgroundColor: '#000000',
-    transform: [{ rotate: '-45deg' }],
-  },
-});
+function ThrowSlot({ used, isMulti }: { used: boolean; isMulti: boolean }) {
+  if (!isMulti) {
+    return <DartIcon used={used} />;
+  }
+  return (
+    <View style={{ width: 38, height: 38, alignItems: 'center', justifyContent: 'center' }}>
+      <View style={{ position: 'absolute', transform: [{ rotate: '-28deg' }] }}>
+        <DartIcon used={used} />
+      </View>
+      <View style={{ position: 'absolute', transform: [{ rotate: '28deg' }] }}>
+        <DartIcon used={used} />
+      </View>
+    </View>
+  );
+}
 
 // ---- TurnWonOverlay ----
 

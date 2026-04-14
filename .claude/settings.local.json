@@ -4,7 +4,10 @@
       "Bash(npm install:*)",
       "Bash(npx expo:*)",
       "Bash(node:*)",
-      "Bash(npx expo-doctor:*)"
+      "Bash(npx expo-doctor:*)",
+      "Bash(grep:*)",
+      "Bash(cd \"C:\\\\Users\\\\Chris\\\\Game Ideas\\\\MobileGame\" && npm test 2>&1)",
+      "Bash(npm test:*)"
     ]
   }
 }
