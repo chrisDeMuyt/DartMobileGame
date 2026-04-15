@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, View, Text, StyleSheet } from 'react-native';
 import { PIXEL_FONT, pixelShadowSm, COLORS } from '../lib/theme';
 import { RoundsState } from '../lib/gameLogic';
-import { DartHit } from '../lib/dartboard';
 
 interface Props { state: RoundsState; }
 
@@ -22,8 +21,6 @@ export default function Scoreboard({ state }: Props) {
   const delta = turnTarget - score;
   const targetMet = score >= turnTarget;
   const comboMult = getComboMult(currentTurnDarts);
-  const multiDartCount = state.ownedItems.filter(item => item.defId === 'multi_dart').length;
-  const totalDarts = 3 + multiDartCount;
 
   const [multTrigger, setMultTrigger] = useState(0);
   const [scoreTrigger, setScoreTrigger] = useState(0);
@@ -52,13 +49,6 @@ export default function Scoreboard({ state }: Props) {
         <AnimatedStatBox label="SCORE" numericValue={score} valueStyle={styles.goldValue} deltaColor={COLORS.gold} triggerKey={scoreTrigger} />
       </View>
 
-      <View style={styles.divider} />
-
-      <DartChips darts={currentTurnDarts} totalDarts={totalDarts} />
-
-      <Text style={[styles.deltaHint, targetMet ? styles.deltaHintMet : styles.deltaHintNeed]}>
-        {targetMet ? 'TARGET MET!' : `NEED ${delta} MORE`}
-      </Text>
     </View>
   );
 }
@@ -255,22 +245,6 @@ function StatBox({ label, value, valueStyle }: { label: string; value: string; v
   );
 }
 
-// ---- Dart chips ----
-
-function DartChips({ darts, totalDarts }: { darts: DartHit[]; totalDarts: number }) {
-  return (
-    <View style={styles.dartHistory}>
-      {darts.map((d, i) => (
-        <View key={i} style={[styles.dartChip, d.score === 0 && styles.dartChipMiss]}>
-          <Text style={styles.dartChipLabel}>{d.label}</Text>
-        </View>
-      ))}
-      {[...Array(Math.max(0, totalDarts - darts.length))].map((_, i) => (
-        <View key={`empty-${i}`} style={styles.dartChipEmpty} />
-      ))}
-    </View>
-  );
-}
 
 const styles = StyleSheet.create({
   container: {
@@ -321,46 +295,4 @@ const styles = StyleSheet.create({
     fontSize: 11,
     letterSpacing: 1,
   },
-  divider: {
-    height: 2,
-    backgroundColor: COLORS.bgCard,
-  },
-  dartHistory: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  dartChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: COLORS.bgPanel,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderWidth: 2,
-    borderColor: COLORS.bgCard,
-    ...pixelShadowSm,
-  },
-  dartChipMiss: { borderColor: COLORS.red },
-  dartChipLabel: {
-    fontFamily: PIXEL_FONT,
-    color: COLORS.muted,
-    fontSize: 7,
-  },
-  dartChipEmpty: {
-    width: 34,
-    height: 32,
-    backgroundColor: COLORS.bgDark,
-    borderWidth: 2,
-    borderColor: COLORS.bgCard,
-    borderStyle: 'dashed',
-  },
-  deltaHint: {
-    fontFamily: PIXEL_FONT,
-    fontSize: 7,
-    letterSpacing: 2,
-    textAlign: 'center',
-  },
-  deltaHintNeed: { color: COLORS.muted },
-  deltaHintMet:  { color: COLORS.cyan },
 });

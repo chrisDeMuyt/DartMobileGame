@@ -17,6 +17,7 @@ const FlyingDartOverlay = lazy(() => import('../components/FlyingDartOverlay'));
 const Slingshot = lazy(() => import('../components/Slingshot'));
 const BoardSectorPicker = lazy(() => import('../components/BoardSectorPicker'));
 const ShatterOverlay = lazy(() => import('../components/ShatterOverlay'));
+const DecorationWall = lazy(() => import('../components/DecorationWall'));
 import Scoreboard from '../components/Scoreboard';
 import ShopModal from '../components/ShopModal';
 import { getDartScore, DartHit, RING_RADII } from '../lib/dartboard';
@@ -32,6 +33,7 @@ import {
   buyPowerup,
   assignBoardSector,
   assignDartSlot,
+  sellItem,
   getAimFactor,
   isMultiDartThrow,
   getMultiDartAimFactor,
@@ -53,6 +55,7 @@ type Action =
   | { type: 'BUY_POWERUP' }
   | { type: 'ASSIGN_BOARD_SECTOR'; instanceId: string; sector: number }
   | { type: 'ASSIGN_DART_SLOT'; instanceId: string; dartIndex: number }
+  | { type: 'SELL_ITEM'; instanceId: string }
   | { type: 'RESTART' };
 
 function gameReducer(state: RoundsState, action: Action): RoundsState {
@@ -75,6 +78,8 @@ function gameReducer(state: RoundsState, action: Action): RoundsState {
       return assignBoardSector(state, action.instanceId, action.sector);
     case 'ASSIGN_DART_SLOT':
       return assignDartSlot(state, action.instanceId, action.dartIndex);
+    case 'SELL_ITEM':
+      return sellItem(state, action.instanceId);
     case 'RESTART':
       return initGameState(state.player);
     default:
@@ -542,6 +547,14 @@ export default function GameScreen() {
       <View style={styles.scoreboardContainer}>
         <Scoreboard state={state} />
       </View>
+
+      {/* Decoration Wall */}
+      <Suspense fallback={<View style={{ height: 80 }} />}>
+        <DecorationWall
+          ownedItems={state.ownedItems}
+          onSell={(instanceId) => dispatch({ type: 'SELL_ITEM', instanceId })}
+        />
+      </Suspense>
 
       {/* Dartboard */}
       <View ref={boardViewRef} style={styles.boardContainer} onLayout={onBoardLayout}>

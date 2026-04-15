@@ -250,6 +250,7 @@ export const ITEMS: ItemDef[] = [
     description: 'Hitting numbers 15–20 or the bullseye adds +6 MULT.',
     rarity: 'uncommon',
     cost: 20,
+    maxOwned: 1,
     // segments 15-20 + outer bull (25) + inner bull (50)
     effect: { type: 'cricket', segments: [15, 16, 17, 18, 19, 20, 25, 50], multBonus: 6 },
   },
@@ -260,6 +261,7 @@ export const ITEMS: ItemDef[] = [
     description: 'At the start of each turn, a random sector is chosen. Hit it to earn $1–$3.',
     rarity: 'uncommon',
     cost: 15,
+    maxOwned: 1,
     effect: { type: 'slots', minReward: 1, maxReward: 3 },
   },
   {
@@ -269,6 +271,7 @@ export const ITEMS: ItemDef[] = [
     description: 'Any unused darts at the end of a turn multiply the total SCORE ×2.',
     rarity: 'rare',
     cost: 25,
+    maxOwned: 1,
     effect: { type: 'leftovers', scoreMultiplier: 2 },
   },
   {
@@ -278,6 +281,7 @@ export const ITEMS: ItemDef[] = [
     description: 'Player gets 2 additional darts per turn.',
     rarity: 'legendary',
     cost: 40,
+    maxOwned: 1,
     effect: { type: 'extra_darts', count: 2 },
   },
 ];
@@ -304,6 +308,16 @@ export function prerequisiteMet(defId: string, ownedDefIds: string[]): boolean {
  * Returns true if the player can purchase one more of this item.
  * Checks both prerequisite and maxOwned cap.
  */
+export const MAX_DECORATIONS = 4;
+
+/**
+ * Returns true if the player has room for one more decoration.
+ * This is a global cap across ALL decoration defIds combined.
+ */
+export function canPurchaseDecoration(ownedItems: OwnedItem[]): boolean {
+  return ownedItems.filter(i => getItemDef(i.defId)?.category === 'decoration').length < MAX_DECORATIONS;
+}
+
 export function canPurchase(defId: string, ownedDefIds: string[], globalTurnIndex = 0): boolean {
   const def = getItemDef(defId);
   if (!def) return false;

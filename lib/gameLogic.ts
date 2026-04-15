@@ -6,6 +6,7 @@ import {
   ItemCategory,
   ITEMS,
   canPurchase,
+  canPurchaseDecoration,
   createOwnedItem,
   getAdjustedCost,
   getItemDef,
@@ -108,8 +109,14 @@ export function generateShopOffers(
 ): ShopOffers {
   const ownedDefIds = ownedItems.map(i => i.defId);
 
-  const itemPool       = eligiblePool(['board', 'dart', 'decoration'], ownedDefIds, globalTurnIndex);
-  const decorationPool = eligiblePool(['decoration'], ownedDefIds, globalTurnIndex);
+  const decoSlotsOpen  = canPurchaseDecoration(ownedItems);
+  const itemPool       = eligiblePool(
+    decoSlotsOpen ? ['board', 'dart', 'decoration'] : ['board', 'dart'],
+    ownedDefIds, globalTurnIndex
+  );
+  const decorationPool = decoSlotsOpen
+    ? eligiblePool(['decoration'], ownedDefIds, globalTurnIndex)
+    : [];
   const boardDartPool  = eligiblePool(['board', 'dart'], ownedDefIds, globalTurnIndex);
   const powerupPool    = eligiblePool(['powerup'], ownedDefIds, globalTurnIndex);
 
@@ -435,6 +442,7 @@ export function buyItem(state: RoundsState, defId: string): RoundsState {
   if (!def) return state;
   const cost = getAdjustedCost(def.cost, state.ownedItems);
   if (state.currency < cost) return state;
+  if (def.category === 'decoration' && !canPurchaseDecoration(state.ownedItems)) return state;
   const newOwnedItems = [...state.ownedItems, createOwnedItem(defId)];
   const newOwnedDefIds = newOwnedItems.map(i => i.defId);
 
@@ -465,6 +473,8 @@ export function claimPackItem(
 ): RoundsState {
   const adjustedCost = getAdjustedCost(PACK_COSTS[packType], state.ownedItems);
   if (state.currency < adjustedCost) return state;
+  const chosenDef = getItemDef(chosenDefId);
+  if (chosenDef?.category === 'decoration' && !canPurchaseDecoration(state.ownedItems)) return state;
   // Clear the pack offer so it can't be opened again this visit
   const shopOffers: ShopOffers = {
     ...state.shopOffers,
@@ -492,6 +502,20 @@ export function buyPowerup(state: RoundsState): RoundsState {
     currency:   state.currency - cost,
     ownedItems: [...state.ownedItems, createOwnedItem(defId)],
     shopOffers: { ...state.shopOffers, powerup: null },
+  };
+}
+
+/** Sell a decoration by instanceId. Refunds floor(cost * 0.75). Only decorations can be sold. */
+export function sellItem(state: RoundsState, instanceId: string): RoundsState {
+  const item = state.ownedItems.find(i => i.instanceId === instanceId);
+  if (!item) return state;
+  const def = getItemDef(item.defId);
+  if (!def || def.category !== 'decoration') return state;
+  const refund = Math.floor(def.cost * 0.75);
+  return {
+    ...state,
+    currency: state.currency + refund,
+    ownedItems: state.ownedItems.filter(i => i.instanceId !== instanceId),
   };
 }
 
